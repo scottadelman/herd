@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isPreviewBuild, readConfig } from './lib/config';
+import { todayISO } from './lib/dates';
 import { createDemoBackend, resetDemo } from './lib/demoBackend';
 import { createSupabaseBackend } from './lib/supabaseBackend';
 import type { Backend, Household, Session } from './lib/types';
 import { AuthScreen } from './screens/Auth';
-import { SetupScreen } from './screens/Setup';
+import { SetupForms, SetupScreen } from './screens/Setup';
 import { TodayScreen } from './screens/Today';
+import { CalendarScreen } from './screens/Calendar';
 import { PetsScreen } from './screens/Pets';
 import { ActivityScreen } from './screens/Activity';
 import { HouseholdScreen } from './screens/HouseholdScreen';
+import { SitterView } from './screens/Sitter';
 import { AppProvider, useHouseholdData } from './state';
-import { Icons, Spinner } from './ui';
+import { Icons, Sheet, Spinner } from './ui';
 
-type Tab = 'today' | 'pets' | 'activity' | 'household';
+type Tab = 'today' | 'calendar' | 'pets' | 'activity' | 'household';
 const MODE_KEY = 'herd-mode';
+const CURRENT_KEY = 'herd-current-household';
 
 function readStored(key: string): string | null {
   try {
@@ -44,7 +48,34 @@ function captureInviteCode(): string | null {
   return readStored('herd-pending-join');
 }
 
+/** Sitter links look like https://…/herd/?sit=TOKEN and need no account. */
+function sitterToken(): string | null {
+  return new URLSearchParams(window.location.search).get('sit');
+}
+
 export default function App() {
+  const config = useMemo(readConfig, []);
+  const sit = useMemo(sitterToken, []);
+  if (sit) return <SitterRoute token={sit} hasConfig={!!config} />;
+  return <MainApp />;
+}
+
+function SitterRoute({ token, hasConfig }: { token: string; hasConfig: boolean }) {
+  const config = useMemo(readConfig, []);
+  const backend = useMemo<Backend>(
+    () => (hasConfig && config ? createSupabaseBackend(config) : createDemoBackend()),
+    [hasConfig, config],
+  );
+  useEffect(() => {
+    // Leave the address as-is so "Add to Home Screen" keeps the sitter link,
+    // rather than the app's own start page.
+    document.querySelector('link[rel="manifest"]')?.remove();
+    document.title = 'Herd: pet care for today';
+  }, []);
+  return <SitterView backend={backend} token={token} />;
+}
+
+function MainApp() {
   const config = useMemo(readConfig, []);
   const [pendingJoin] = useState(captureInviteCode);
   const [mode, setMode] = useState<'live' | 'demo' | null>(() =>
@@ -57,11 +88,12 @@ export default function App() {
   }, [mode, config]);
 
   const [session, setSession] = useState<Session | null | undefined>(undefined);
-  const [household, setHousehold] = useState<Household | null | undefined>(undefined);
+  const [households, setHouseholds] = useState<Household[] | undefined>(undefined);
+  const [currentId, setCurrentId] = useState<string | null>(() => readStored(CURRENT_KEY));
 
   useEffect(() => {
     setSession(undefined);
-    setHousehold(undefined);
+    setHouseholds(undefined);
     if (!backend) {
       setSession(null);
       return;
@@ -75,20 +107,27 @@ export default function App() {
     };
   }, [backend]);
 
+  const refreshHouseholds = useCallback(async () => {
+    if (!backend) return;
+    try {
+      setHouseholds(await backend.listMyHouseholds());
+    } catch {
+      setHouseholds([]);
+    }
+  }, [backend]);
+
   useEffect(() => {
     if (!backend || !session) {
-      setHousehold(session === null ? null : undefined);
+      setHouseholds(session === null ? [] : undefined);
       return;
     }
-    let alive = true;
-    backend
-      .getMyHousehold()
-      .then((h) => alive && setHousehold(h))
-      .catch(() => alive && setHousehold(null));
-    return () => {
-      alive = false;
-    };
+    refreshHouseholds();
   }, [backend, session?.userId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const choose = useCallback((id: string | null) => {
+    writeStored(CURRENT_KEY, id);
+    setCurrentId(id);
+  }, []);
 
   const startDemo = useCallback(() => {
     resetDemo();
@@ -102,34 +141,40 @@ export default function App() {
     setMode(config ? 'live' : null);
   }, [config]);
 
+  const onReady = useCallback(
+    (h: Household) => {
+      writeStored('herd-pending-join', null);
+      setHouseholds((list) => [...(list ?? []).filter((x) => x.id !== h.id), h]);
+      choose(h.id);
+    },
+    [choose],
+  );
+
   if (session === undefined) return <FullScreenLoading />;
 
   if (!backend || !session) {
     return <AuthScreen backend={mode === 'live' ? backend : null} configured={!!config} onTryDemo={startDemo} />;
   }
 
-  if (household === undefined) return <FullScreenLoading />;
+  if (households === undefined) return <FullScreenLoading />;
 
-  if (!household) {
-    return (
-      <SetupScreen
-        backend={backend}
-        pendingJoin={pendingJoin}
-        onReady={(h) => {
-          writeStored('herd-pending-join', null);
-          setHousehold(h);
-        }}
-      />
-    );
-  }
+  const current = households.find((h) => h.id === currentId) ?? households[0];
+  if (!current) return <SetupScreen backend={backend} pendingJoin={pendingJoin} onReady={onReady} />;
 
   return (
     <Shell
-      key={household.id}
+      key={current.id}
       backend={backend}
       session={session}
-      household={household}
-      onLeftHousehold={() => setHousehold(null)}
+      household={current}
+      households={households}
+      pendingJoin={pendingJoin}
+      onSwitch={choose}
+      onReady={onReady}
+      onLeftHousehold={async () => {
+        choose(null);
+        await refreshHouseholds();
+      }}
       exitDemo={exitDemo}
     />
   );
@@ -147,18 +192,33 @@ function Shell({
   backend,
   session,
   household,
+  households,
+  pendingJoin,
+  onSwitch,
+  onReady,
   onLeftHousehold,
   exitDemo,
 }: {
   backend: Backend;
   session: Session;
   household: Household;
+  households: Household[];
+  pendingJoin: string | null;
+  onSwitch: (id: string) => void;
+  onReady: (h: Household) => void;
   onLeftHousehold: () => void;
   exitDemo: () => void;
 }) {
   const [tab, setTab] = useState<Tab>('today');
+  const [date, setDate] = useState(todayISO());
+  const [adding, setAdding] = useState(false);
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
   const data = useHouseholdData(backend, session, household);
   const { snapshot } = data;
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [tab]);
 
   if (!snapshot) {
     return data.error ? (
@@ -188,6 +248,7 @@ function Shell({
 
   const tabs: { key: Tab; label: string; icon: JSX.Element }[] = [
     { key: 'today', label: 'Today', icon: Icons.today },
+    { key: 'calendar', label: 'Calendar', icon: Icons.calendar },
     { key: 'pets', label: 'Pets', icon: Icons.paw },
     { key: 'activity', label: 'Activity', icon: Icons.activity },
     { key: 'household', label: 'Household', icon: Icons.home },
@@ -200,13 +261,27 @@ function Shell({
         session,
         snapshot,
         me,
+        households,
+        switchHousehold: onSwitch,
+        addHousehold: () => setAdding(true),
         freshLogIds: data.freshLogIds,
         reload: data.reload,
-        complete: data.complete,
+        checkOff: data.checkOff,
+        skip: data.skip,
+        snooze: data.snooze,
         undo: data.undo,
+        editLog: data.editLog,
+        logAdhoc: data.logAdhoc,
         run: data.run,
         onLeftHousehold,
         exitDemo,
+        date,
+        setDate,
+        goToDay: (d) => {
+          setDate(d);
+          setTab('today');
+        },
+        openSitterPreview: setPreviewToken,
       }}
     >
       <div className="app">
@@ -222,6 +297,7 @@ function Shell({
         )}
         <main className="screen">
           {tab === 'today' && <TodayScreen onGoToPets={() => setTab('pets')} />}
+          {tab === 'calendar' && <CalendarScreen />}
           {tab === 'pets' && <PetsScreen />}
           {tab === 'activity' && <ActivityScreen />}
           {tab === 'household' && <HouseholdScreen />}
@@ -232,7 +308,10 @@ function Shell({
               key={t.key}
               className={`tab${tab === t.key ? ' tab-on' : ''}`}
               aria-current={tab === t.key ? 'page' : undefined}
-              onClick={() => setTab(t.key)}
+              onClick={() => {
+                if (t.key === 'today' && tab === 'today') setDate(todayISO());
+                setTab(t.key);
+              }}
             >
               {t.icon}
               <span>{t.label}</span>
@@ -240,6 +319,31 @@ function Shell({
           ))}
         </nav>
       </div>
+
+      {adding && (
+        <Sheet title="Add another household" onClose={() => setAdding(false)}>
+          <SetupForms
+            backend={backend}
+            pendingJoin={pendingJoin}
+            onReady={(h) => {
+              setAdding(false);
+              onReady(h);
+            }}
+          />
+        </Sheet>
+      )}
+
+      {previewToken && (
+        <div className="preview-overlay" role="dialog" aria-modal="true" aria-label="Sitter view preview">
+          <div className="preview-bar">
+            <span>Preview of the sitter’s view. Check-offs are turned off here.</span>
+            <button className="btn-text" onClick={() => setPreviewToken(null)}>
+              Close
+            </button>
+          </div>
+          <SitterView backend={backend} token={previewToken} preview />
+        </div>
+      )}
     </AppProvider>
   );
 }

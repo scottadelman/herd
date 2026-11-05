@@ -9,7 +9,9 @@
     "build:preview": "vite build --mode preview && node scripts/finish-preview.mjs",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:schema": "node scripts/test-schema.mjs"
+    "test:schema": "node scripts/build-schema.mjs && node scripts/test-schema.mjs",
+    "build:schema": "node scripts/build-schema.mjs",
+    "build:function": "node scripts/build-function.mjs"
   },
   "dependencies": {
     "@fontsource/permanent-marker": "^5.3.0",

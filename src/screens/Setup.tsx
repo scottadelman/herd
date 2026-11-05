@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react';
 import type { Backend, Household } from '../lib/types';
 import { Field } from '../ui';
 
-export function SetupScreen({
+/** Start a household or join one with a code. Used on first run and from the Household tab. */
+export function SetupForms({
   backend,
   pendingJoin,
   onReady,
@@ -35,6 +36,7 @@ export function SetupScreen({
       <p className="muted">Someone already set things up? Enter the code from their invite.</p>
       <Field label="Invite code">
         <input
+          id="join-code"
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           required
@@ -56,7 +58,7 @@ export function SetupScreen({
       <h2>Start a household</h2>
       <p className="muted">You’ll add your pets next, then invite the people who help care for them.</p>
       <Field label="Household name">
-        <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={60} placeholder="The Rivera house" />
+        <input id="household-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={60} placeholder="The Rivera house" />
       </Field>
       <button className={`btn ${pendingJoin ? 'btn-quiet' : 'btn-primary'} btn-block`} disabled={!!busy}>
         {busy === 'create' ? 'Creating…' : 'Create household'}
@@ -65,8 +67,7 @@ export function SetupScreen({
   );
 
   return (
-    <div className="setup">
-      <h1 className="screen-title">Set up your household</h1>
+    <div className="stack">
       {error && <p className="form-error">{error}</p>}
       {pendingJoin ? (
         <>
@@ -79,6 +80,23 @@ export function SetupScreen({
           {join}
         </>
       )}
+    </div>
+  );
+}
+
+export function SetupScreen({
+  backend,
+  pendingJoin,
+  onReady,
+}: {
+  backend: Backend;
+  pendingJoin: string | null;
+  onReady: (h: Household) => void;
+}) {
+  return (
+    <div className="setup">
+      <h1 className="screen-title">Set up your household</h1>
+      <SetupForms backend={backend} pendingJoin={pendingJoin} onReady={onReady} />
       <button className="btn-text" onClick={() => backend.signOut()}>
         Sign out
       </button>

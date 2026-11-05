@@ -1,5 +1,5 @@
 import type { Routine } from './types';
-import { addDays, daysBetween, formatShortDate, formatTime, minutesOf, todayISO, weekdayOf, weekdayShort } from './dates';
+import { addDays, daysBetween, formatDayLabel, formatShortDate, formatTime, minutesOf, todayISO, weekdayOf, weekdayShort } from './dates';
 
 export const ANY_TIME = 'any';
 
@@ -18,11 +18,14 @@ export function occurrencesForDate(r: Routine, date: string): string[] {
       if (n < 1) return [];
       return daysBetween(r.start_date, date) % n === 0 ? slots : [];
     }
+    case 'once':
+      return date === r.start_date ? slots : [];
   }
 }
 
 /** Next day (from `from`, inclusive) the routine is due, or null. */
 export function nextDueDate(r: Routine, from: string = todayISO()): string | null {
+  if (r.kind === 'once') return daysBetween(from, r.start_date) >= 0 ? r.start_date : null;
   for (let i = 0; i < 400; i++) {
     const d = addDays(from, i);
     if (occurrencesForDate(r, d).length) return d;
@@ -54,6 +57,12 @@ export function describeSchedule(r: Routine, today: string = todayISO()): string
       const next = nextDueDate(r, today);
       const when = next === null ? '' : next === today ? ', due today' : `, next ${formatShortDate(next)}`;
       return `${every}${at}${when}`;
+    }
+    case 'once': {
+      const diff = daysBetween(today, r.start_date);
+      if (diff < -1) return `Was ${formatShortDate(r.start_date)}${at}`;
+      const label = formatDayLabel(r.start_date, today);
+      return `${diff >= -1 && diff <= 1 ? label : `On ${label}`}${at}`;
     }
   }
 }

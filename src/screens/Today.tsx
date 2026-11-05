@@ -1,52 +1,34 @@
 import { useMemo, useState } from 'react';
-import { addDays, formatClock, formatDayLabel, formatTime, todayISO } from '../lib/dates';
+import { addDays, daysBetween, formatClock, formatDayLabel, formatTime, toISODate, todayISO, dayPhrase } from '../lib/dates';
+import { buildDay, countsTowardProgress, indexLogs, isLate, isResolved, snoozeTarget, type DayItem } from '../lib/day';
 import { firstName, memberById } from '../lib/people';
-import { ANY_TIME, PERIODS, isOverdue, occurrencesForDate, periodOf, slotKey, type Period } from '../lib/schedule';
-import type { Pet, Routine, TaskLog } from '../lib/types';
-import { useApp } from '../state';
-import { Icons, PetAvatar, Sheet, Stamp } from '../ui';
+import { ANY_TIME, PERIODS, periodOf, type Period } from '../lib/schedule';
+import { useApp, whoDid } from '../state';
+import { CategoryMark, Icons, PetAvatar, Sheet, Stamp } from '../ui';
 
-interface Item {
-  key: string;
-  routine: Routine;
-  pet: Pet;
-  slot: string;
-  log: TaskLog | undefined;
-}
+const MAX_AHEAD = 60;
+const SITTER_GREY = '#7B8794';
 
 export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
-  const { snapshot, me, complete, undo, freshLogIds } = useApp();
+  const { snapshot, date, setDate, checkOff, freshLogIds } = useApp();
   const today = todayISO();
-  const [date, setDate] = useState(today);
   const [petFilter, setPetFilter] = useState<string>('all');
-  const [detail, setDetail] = useState<Item | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
 
-  const items = useMemo(() => {
-    const byKey = new Map<string, TaskLog>();
-    for (const l of snapshot.logs) if (l.routine_id) byKey.set(slotKey(l.routine_id, l.occurrence_date, l.slot), l);
-    const petsById = new Map(snapshot.pets.map((p) => [p.id, p]));
-    const out: Item[] = [];
-    for (const r of snapshot.routines) {
-      const pet = petsById.get(r.pet_id);
-      if (!pet || (petFilter !== 'all' && pet.id !== petFilter)) continue;
-      for (const slot of occurrencesForDate(r, date)) {
-        const key = slotKey(r.id, date, slot);
-        out.push({ key, routine: r, pet, slot, log: byKey.get(key) });
-      }
-    }
-    return out.sort(
-      (a, b) =>
-        (a.slot === ANY_TIME ? '99' : a.slot).localeCompare(b.slot === ANY_TIME ? '99' : b.slot) ||
-        a.pet.name.localeCompare(b.pet.name) ||
-        a.routine.title.localeCompare(b.routine.title),
-    );
-  }, [snapshot, date, petFilter]);
+  const index = useMemo(() => indexLogs(snapshot.logs), [snapshot.logs]);
+  const items = useMemo(
+    () => buildDay(snapshot, date, { petId: petFilter === 'all' ? undefined : petFilter, index }),
+    [snapshot, date, petFilter, index],
+  );
+  const opened = items.find((i) => i.key === openKey) ?? null;
 
-  const done = items.filter((i) => i.log).length;
+  const counted = items.filter(countsTowardProgress);
+  const done = counted.filter(isResolved).length;
+  const ahead = daysBetween(today, date);
+  const isFuture = ahead > 0;
   const grouped = PERIODS.map((p) => ({ ...p, items: items.filter((i) => periodOf(i.slot) === p.key) })).filter(
     (g) => g.items.length,
   );
-  const canGoForward = date < today;
   const pets = snapshot.pets;
 
   return (
@@ -61,21 +43,29 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
             className="icon-btn"
             onClick={() => setDate(addDays(date, 1))}
             aria-label="Next day"
-            disabled={!canGoForward}
+            disabled={ahead >= MAX_AHEAD}
           >
             {Icons.next}
           </button>
+          {date !== today && (
+            <button className="btn-text day-nav-today" onClick={() => setDate(today)}>
+              Back to today
+            </button>
+          )}
         </div>
-        {items.length > 0 && (
-          <div className="progress" aria-label={`${done} of ${items.length} done`}>
-            <span className="progress-text">
-              {done === items.length ? 'All done' : `${done} of ${items.length} done`}
-            </span>
-            <span className="progress-track">
-              <span className="progress-fill" style={{ width: `${(done / items.length) * 100}%` }} />
-            </span>
-          </div>
-        )}
+        {counted.length > 0 &&
+          (isFuture ? (
+            <p className="progress-text">
+              {counted.length} {counted.length === 1 ? 'task' : 'tasks'} planned
+            </p>
+          ) : (
+            <div className="progress" aria-label={`${done} of ${counted.length} done`}>
+              <span className="progress-text">{done === counted.length ? 'All done' : `${done} of ${counted.length} done`}</span>
+              <span className="progress-track">
+                <span className="progress-fill" style={{ width: `${(done / counted.length) * 100}%` }} />
+              </span>
+            </div>
+          ))}
       </header>
 
       {pets.length > 1 && (
@@ -104,7 +94,10 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
         </div>
       ) : items.length === 0 ? (
         <div className="empty">
-          <p>Nothing scheduled {date === today ? 'today' : 'this day'}{petFilter !== 'all' ? ' for this pet' : ''}.</p>
+          <p>
+            Nothing scheduled {date === today ? 'today' : 'this day'}
+            {petFilter !== 'all' ? ' for this pet' : ''}.
+          </p>
           <button className="btn btn-quiet" onClick={onGoToPets}>
             Add a routine
           </button>
@@ -118,19 +111,11 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
                 <TaskRow
                   key={item.key}
                   item={item}
-                  date={date}
                   period={g.key}
+                  future={isFuture}
                   fresh={!!item.log && freshLogIds.has(item.log.id)}
-                  onCheck={() =>
-                    complete({
-                      petId: item.pet.id,
-                      routineId: item.routine.id,
-                      date,
-                      slot: item.slot,
-                      title: item.routine.title,
-                    })
-                  }
-                  onOpen={() => setDetail(item)}
+                  onCheck={() => checkOff(item)}
+                  onOpen={() => setOpenKey(item.key)}
                 />
               ))}
             </ul>
@@ -138,17 +123,49 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
         ))
       )}
 
-      {detail && detail.log && (
-        <DoneSheet
-          item={detail}
-          log={detail.log}
-          onClose={() => setDetail(null)}
-          onUndo={() => {
-            undo(detail.log!);
-            setDetail(null);
-          }}
-          isMine={detail.log.done_by === me.user_id}
-        />
+      {opened && <TaskSheet item={opened} onClose={() => setOpenKey(null)} />}
+    </>
+  );
+}
+
+function rowMeta(item: DayItem, period: Period, ctx: ReturnType<typeof useApp>): JSX.Element {
+  const { snapshot, me } = ctx;
+  const today = todayISO();
+  const { routine, pet, slot, log, state } = item;
+  const who = log ? whoDid(log, snapshot.members, me.user_id) : '';
+  const parts: JSX.Element[] = [<span key="pet">{pet.name}</span>];
+  if (routine.category === 'medication' && routine.dose) parts.push(<span key="dose">{routine.dose}</span>);
+
+  if (state === 'done' && log) {
+    parts.push(<span key="w">by {who} at {formatClock(log.done_at)}</span>);
+  } else if (state === 'skipped') {
+    parts.push(<span key="w">skipped by {who}</span>);
+  } else if (state === 'moved' && item.movedTo) {
+    parts.push(<span key="w">moved to {dayPhrase(item.movedTo, today)} by {who}</span>);
+  } else {
+    if (slot !== ANY_TIME) parts.push(<span key="t">{formatTime(slot)}</span>);
+    if (isLate(item)) {
+      parts.push(
+        <span key="late" className="late">
+          {period === 'anytime' || daysBetween(today, item.date) < 0 ? 'missed' : 'overdue'}
+        </span>,
+      );
+    }
+  }
+  const out: JSX.Element[] = [];
+  parts.forEach((p, i) => {
+    if (i > 0) out.push(<span key={`sep${i}`}>, </span>);
+    out.push(p);
+  });
+  const assignee = memberById(snapshot.members, routine.assignee);
+  return (
+    <>
+      <span className="row-meta-text">{out}</span>
+      {item.movedFrom && state !== 'done' && state !== 'skipped' && (
+        <span className="turn">from {dayPhrase(item.movedFrom, today)}</span>
+      )}
+      {state === 'open' && assignee && (
+        <span className="turn">{assignee.user_id === me.user_id ? 'Your turn' : `${firstName(assignee.display_name)}’s turn`}</span>
       )}
     </>
   );
@@ -156,102 +173,308 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
 
 function TaskRow({
   item,
-  date,
   period,
+  future,
   fresh,
   onCheck,
   onOpen,
 }: {
-  item: Item;
-  date: string;
+  item: DayItem;
   period: Period;
+  future: boolean;
   fresh: boolean;
   onCheck: () => void;
   onOpen: () => void;
 }) {
-  const { snapshot, me } = useApp();
-  const { routine, pet, slot, log } = item;
-  const doneBy = log ? memberById(snapshot.members, log.done_by) : undefined;
-  const doneName = log?.done_by === me.user_id ? 'you' : firstName(doneBy?.display_name ?? 'someone');
-  const assignee = memberById(snapshot.members, routine.assignee);
-  const late = !log && isOverdue(date, slot);
-  const when = slot === ANY_TIME ? '' : ` at ${formatTime(slot)}`;
+  const ctx = useApp();
+  const { snapshot } = ctx;
+  const { routine, pet, log, state } = item;
+  const doer = log ? memberById(snapshot.members, log.done_by) : undefined;
+  const label = `${routine.title} for ${pet.name}`;
 
-  let meta: JSX.Element;
-  if (log) {
-    meta = (
-      <>
-        {pet.name}, by {doneName} at {formatClock(log.done_at)}
-      </>
+  let action: JSX.Element;
+  if (state === 'done' && log) {
+    const name = doer?.display_name ?? log.sitter_name ?? '?';
+    action = (
+      <button className="stamp-btn" onClick={onOpen} aria-label={`${label}, done. Details`}>
+        <Stamp name={name} color={doer?.color ?? SITTER_GREY} fresh={fresh || log.id.startsWith('temp-')} />
+      </button>
+    );
+  } else if (state === 'skipped') {
+    action = (
+      <button className="stamp-btn" onClick={onOpen} aria-label={`${label}, skipped. Details`}>
+        <span className="stamp-skip">{Icons.skip}</span>
+      </button>
+    );
+  } else if (state === 'moved') {
+    action = (
+      <button className="stamp-btn" onClick={onOpen} aria-label={`${label}, moved. Details`}>
+        <span className="stamp-skip">{Icons.moved}</span>
+      </button>
+    );
+  } else if (future) {
+    action = (
+      <button className="stamp-btn" onClick={onOpen} aria-label={`${label}, coming up. Options`}>
+        <span className="stamp-empty stamp-future" />
+      </button>
     );
   } else {
-    meta = (
-      <>
-        {pet.name}
-        {when}
-        {late && <span className="late">{period === 'anytime' ? ', missed' : ', overdue'}</span>}
-        {assignee && (
-          <span className="turn">{assignee.user_id === me.user_id ? 'Your turn' : `${firstName(assignee.display_name)}’s turn`}</span>
-        )}
-      </>
+    action = (
+      <button className="stamp-btn" onClick={onCheck} aria-label={`Check off ${label}`}>
+        <span className="stamp-empty" />
+      </button>
     );
   }
 
-  const label = `${routine.title} for ${pet.name}`;
   return (
-    <li className={`row${log ? ' row-done' : ''}`}>
-      <PetAvatar emoji={pet.emoji} />
-      <div className="row-text">
-        <span className="row-title">{routine.title}</span>
-        <span className="row-meta">{meta}</span>
-      </div>
-      {log ? (
-        <button className="stamp-btn" onClick={onOpen} aria-label={`${label}, done by ${doneBy?.display_name ?? 'someone'}. Details`}>
-          <Stamp name={doneBy?.display_name ?? '?'} color={doneBy?.color ?? '#7B8794'} fresh={fresh || log.id.startsWith('temp-')} />
-        </button>
-      ) : (
-        <button className="stamp-btn" onClick={onCheck} aria-label={`Check off ${label}`}>
-          <span className="stamp-empty" />
-        </button>
-      )}
+    <li className={`row row-task row-${state}`}>
+      <button className="row-main" onClick={onOpen} aria-label={`${label}. Options`}>
+        <PetAvatar emoji={pet.emoji} photo={pet.photo} />
+        <span className="row-text">
+          <span className="row-title">
+            <CategoryMark category={routine.category} />
+            {routine.title}
+          </span>
+          <span className="row-meta">{rowMeta(item, period, ctx)}</span>
+        </span>
+      </button>
+      {action}
     </li>
   );
 }
 
-function DoneSheet({
-  item,
-  log,
-  isMine,
-  onClose,
-  onUndo,
-}: {
-  item: Item;
-  log: TaskLog;
-  isMine: boolean;
-  onClose: () => void;
-  onUndo: () => void;
-}) {
-  const { snapshot } = useApp();
-  const who = memberById(snapshot.members, log.done_by);
+function TaskSheet({ item, onClose }: { item: DayItem; onClose: () => void }) {
+  const { snapshot, me, checkOff, skip, snooze, undo, editLog, backend } = useApp();
+  const { routine, pet, log, state, slot } = item;
+  const today = todayISO();
+  const future = daysBetween(today, item.date) > 0;
+  const [note, setNote] = useState(log?.note ?? '');
+  const [showNote, setShowNote] = useState(false);
+  const mine = !!log && log.done_by === me.user_id;
+  const [time, setTime] = useState(() => (log ? toTimeInput(log.done_at) : ''));
+  const target = snoozeTarget(item.date, today);
+  const targetLabel = dayPhrase(target, today);
+  const who = log ? whoDid(log, snapshot.members, me.user_id, true) : '';
+  const doer = log ? memberById(snapshot.members, log.done_by) : undefined;
+  const assignee = memberById(snapshot.members, routine.assignee);
+  const pending = !!log?.id.startsWith('temp-');
+
+  const when = slot === ANY_TIME ? 'Any time' : formatTime(slot);
+  const details = (
+    <dl className="facts">
+      <div>
+        <dt>When</dt>
+        <dd>
+          {formatDayLabel(item.date, today)}, {when.toLowerCase() === 'any time' ? 'any time' : when}
+          {item.movedFrom ? ` (moved from ${dayPhrase(item.movedFrom, today)})` : ''}
+        </dd>
+      </div>
+      {routine.category === 'medication' && routine.dose && (
+        <div>
+          <dt>Dose</dt>
+          <dd>{routine.dose}</dd>
+        </div>
+      )}
+      {assignee && (
+        <div>
+          <dt>Whose job</dt>
+          <dd>{assignee.user_id === me.user_id ? 'Yours' : assignee.display_name}</dd>
+        </div>
+      )}
+      {routine.notes && (
+        <div>
+          <dt>Notes</dt>
+          <dd>{routine.notes}</dd>
+        </div>
+      )}
+    </dl>
+  );
+
+  if (state === 'open') {
+    return (
+      <Sheet
+        title={`${routine.title} for ${pet.name}`}
+        onClose={onClose}
+        footer={
+          <div className="sheet-actions">
+            <button
+              className="btn btn-primary btn-block"
+              disabled={future}
+              onClick={() => {
+                onClose();
+                checkOff(item, note.trim() || null);
+              }}
+            >
+              {future ? 'Check off on the day' : note.trim() ? 'Check off with note' : 'Check off'}
+            </button>
+            <div className="btn-pair">
+              <button
+                className="btn btn-quiet"
+                onClick={() => {
+                  onClose();
+                  snooze(item);
+                }}
+              >
+                {daysBetween(today, target) === 0 && item.date !== today ? 'Move to today' : 'Snooze a day'}
+              </button>
+              <button
+                className="btn btn-quiet"
+                onClick={() => {
+                  onClose();
+                  skip(item);
+                }}
+              >
+                Skip {future ? 'that day' : item.date === today ? 'today' : 'it'}
+              </button>
+            </div>
+          </div>
+        }
+      >
+        <div className="stack">
+          {details}
+          {!future &&
+            (showNote ? (
+              <label className="field">
+                <span className="field-label">Note</span>
+                <textarea
+                  id="checkoff-note"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={2}
+                  maxLength={500}
+                  placeholder="Only ate half, seemed tired…"
+                  autoFocus
+                />
+              </label>
+            ) : (
+              <button className="btn-text" onClick={() => setShowNote(true)}>
+                Add a note
+              </button>
+            ))}
+          <p className="muted small">
+            Snoozing moves it to {targetLabel}. Skipping marks it as not needed{future ? ' that day' : ''}.
+          </p>
+        </div>
+      </Sheet>
+    );
+  }
+
+  if (state === 'moved' && log) {
+    return (
+      <Sheet
+        title={`${routine.title} for ${pet.name}`}
+        onClose={onClose}
+        footer={
+          <button
+            className="btn btn-quiet btn-block"
+            disabled={pending}
+            onClick={() => {
+              onClose();
+              undo(log);
+            }}
+          >
+            Move it back to {dayPhrase(item.date, today)}
+          </button>
+        }
+      >
+        <div className="stack">
+          <p>
+            {who} moved this to {dayPhrase(item.movedTo!, today)}.
+          </p>
+          {details}
+        </div>
+      </Sheet>
+    );
+  }
+
+  // done or skipped
+  const changed = (log?.note ?? '') !== note || (log && toTimeInput(log.done_at) !== time);
   return (
     <Sheet
-      title={`${item.routine.title} for ${item.pet.name}`}
+      title={`${routine.title} for ${pet.name}`}
       onClose={onClose}
       footer={
-        <button className="btn btn-quiet btn-block" onClick={onUndo} disabled={log.id.startsWith('temp-')}>
-          Undo check-off
-        </button>
+        <div className="sheet-actions">
+          {mine && (
+            <button
+              className="btn btn-primary btn-block"
+              disabled={!changed || pending}
+              onClick={() => {
+                if (!log) return;
+                onClose();
+                editLog(log, { note: note.trim() || null, done_at: withTime(log.done_at, time) });
+              }}
+            >
+              Save changes
+            </button>
+          )}
+          <button
+            className="btn btn-quiet btn-block"
+            disabled={pending}
+            onClick={() => {
+              if (!log) return;
+              onClose();
+              undo(log);
+            }}
+          >
+            {state === 'skipped' ? 'Undo skip' : 'Undo check-off'}
+          </button>
+        </div>
       }
     >
-      <div className="done-detail">
-        <Stamp name={who?.display_name ?? '?'} color={who?.color ?? '#7B8794'} size="lg" />
-        <p>
-          {isMine ? 'You' : who?.display_name ?? 'Someone'} checked this off at {formatClock(log.done_at)}
-          {log.occurrence_date !== todayISO() ? `, ${formatDayLabel(log.occurrence_date)}` : ''}.
-        </p>
-        {log.note && <p className="note">“{log.note}”</p>}
-        {item.routine.notes && <p className="muted">Routine notes: {item.routine.notes}</p>}
+      <div className="stack">
+        <div className="done-detail">
+          {state === 'done' ? (
+            <Stamp name={doer?.display_name ?? log?.sitter_name ?? '?'} color={doer?.color ?? SITTER_GREY} size="lg" />
+          ) : (
+            <span className="stamp-skip stamp-skip-lg">{Icons.skip}</span>
+          )}
+          <p>
+            {who} {state === 'skipped' ? 'skipped this' : 'checked this off'} at {log ? formatClock(log.done_at) : ''}
+            {log && toISODate(new Date(log.done_at)) !== today
+              ? `, ${dayPhrase(toISODate(new Date(log.done_at)), today)}`
+              : ''}
+            .
+          </p>
+        </div>
+        {mine ? (
+          <>
+            <label className="field">
+              <span className="field-label">{state === 'skipped' ? 'Time' : 'Time it was done'}</span>
+              <input id="done-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+              <span className="field-hint">Forgot to tap? Set the time it actually happened.</span>
+            </label>
+            <label className="field">
+              <span className="field-label">Note</span>
+              <textarea
+                id="done-note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                maxLength={500}
+                placeholder="Only ate half, seemed tired…"
+              />
+            </label>
+          </>
+        ) : (
+          log?.note && <p className="note">“{log.note}”</p>
+        )}
+        {!mine && backend.kind === 'supabase' && <p className="muted small">Only {who} can change the time or note.</p>}
+        {details}
       </div>
     </Sheet>
   );
+}
+
+function toTimeInput(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function withTime(iso: string, hhmm: string): string {
+  if (!/^\d{2}:\d{2}$/.test(hhmm)) return iso;
+  const d = new Date(iso);
+  const [h, m] = hhmm.split(':').map(Number);
+  d.setHours(h, m, 0, 0);
+  return d.toISOString();
 }

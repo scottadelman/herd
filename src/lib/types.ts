@@ -18,6 +18,7 @@ export interface Household {
   name: string;
   invite_code: string;
   created_by: string;
+  timezone: string | null;
 }
 
 export interface Member {
@@ -25,6 +26,9 @@ export interface Member {
   role: 'owner' | 'member';
   color: string;
   display_name: string;
+  notify_late: boolean;
+  /** "HH:MM" for a morning summary, or null for none. */
+  notify_daily: string | null;
 }
 
 export interface Pet {
@@ -34,10 +38,13 @@ export interface Pet {
   species: Species;
   emoji: string;
   notes: string | null;
+  /** Small JPEG as a data URL, or null to show the emoji. */
+  photo: string | null;
   created_at: string;
 }
 
-export type ScheduleKind = 'daily' | 'weekly' | 'interval';
+export type ScheduleKind = 'daily' | 'weekly' | 'interval' | 'once';
+export type Category = 'care' | 'medication' | 'vaccine' | 'vet';
 
 export interface Routine {
   id: string;
@@ -45,19 +52,24 @@ export interface Routine {
   pet_id: string;
   title: string;
   kind: ScheduleKind;
+  category: Category;
+  /** Medications only, e.g. "1 chewable" or "25 mg". */
+  dose: string | null;
   /** "HH:MM" 24h strings. Empty means "any time of day". */
   times: string[];
   /** 0 = Sunday ... 6 = Saturday. Used when kind = 'weekly'. */
   weekdays: number[];
   /** Used when kind = 'interval'. */
   interval_days: number | null;
-  /** "YYYY-MM-DD". First day the routine applies; anchor for intervals. */
+  /** "YYYY-MM-DD". First day it applies; the date itself for 'once'. */
   start_date: string;
   assignee: string | null;
   notes: string | null;
   active: boolean;
   created_at: string;
 }
+
+export type LogStatus = 'done' | 'skipped' | 'snoozed';
 
 export interface TaskLog {
   id: string;
@@ -70,8 +82,39 @@ export interface TaskLog {
   slot: string;
   title: string;
   note: string | null;
-  done_by: string;
+  status: LogStatus;
+  /** Set when the occurrence was moved: it shows on this date instead. */
+  snoozed_to: string | null;
+  /** Null when a sitter checked it off. */
+  done_by: string | null;
+  sitter_link_id: string | null;
+  sitter_name: string | null;
   done_at: string;
+}
+
+export interface Weight {
+  id: string;
+  household_id: string;
+  pet_id: string;
+  weighed_on: string;
+  weight: number;
+  unit: 'lb' | 'kg';
+  note: string | null;
+  recorded_by: string | null;
+  created_at: string;
+}
+
+export interface SitterLink {
+  id: string;
+  household_id: string;
+  token: string;
+  label: string;
+  /** Empty means every pet. */
+  pet_ids: string[];
+  expires_at: string;
+  revoked: boolean;
+  created_by: string | null;
+  created_at: string;
 }
 
 export interface Snapshot {
@@ -80,14 +123,45 @@ export interface Snapshot {
   pets: Pet[];
   routines: Routine[];
   logs: TaskLog[];
+  weights: Weight[];
+  sitterLinks: SitterLink[];
 }
 
-export type PetInput = Pick<Pet, 'name' | 'species' | 'emoji' | 'notes'>;
+/** What a sitter's link shows: today's tasks for the pets on the link. */
+export interface SitterSnapshot {
+  link: { id: string; label: string; expires_at: string };
+  today: string;
+  household: { id: string; name: string };
+  members: Pick<Member, 'user_id' | 'display_name' | 'color'>[];
+  pets: Pet[];
+  routines: Routine[];
+  logs: TaskLog[];
+}
+
+export type PetInput = Pick<Pet, 'name' | 'species' | 'emoji' | 'notes' | 'photo'>;
 
 export type RoutineInput = Pick<
   Routine,
-  'pet_id' | 'title' | 'kind' | 'times' | 'weekdays' | 'interval_days' | 'start_date' | 'assignee' | 'notes'
+  | 'pet_id'
+  | 'title'
+  | 'kind'
+  | 'category'
+  | 'dose'
+  | 'times'
+  | 'weekdays'
+  | 'interval_days'
+  | 'start_date'
+  | 'assignee'
+  | 'notes'
 >;
+
+export type WeightInput = Pick<Weight, 'pet_id' | 'weighed_on' | 'weight' | 'unit' | 'note'>;
+
+export interface SitterLinkInput {
+  label: string;
+  pet_ids: string[];
+  expires_at: string;
+}
 
 export interface CompleteInput {
   householdId: string;
@@ -97,9 +171,21 @@ export interface CompleteInput {
   slot: string;
   title: string;
   note?: string | null;
+  status?: LogStatus;
+  snoozedTo?: string | null;
 }
 
+export type LogPatch = Partial<
+  Pick<TaskLog, 'status' | 'snoozed_to' | 'done_by' | 'done_at' | 'note' | 'sitter_link_id' | 'sitter_name'>
+>;
+
 export type CompleteResult = { ok: true; log: TaskLog } | { ok: false; existing: TaskLog | null };
+
+export interface PushKeys {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+}
 
 export interface ChangeEvent {
   table: string;
@@ -116,27 +202,47 @@ export interface Backend {
   sendPasswordReset(email: string): Promise<void>;
   signOut(): Promise<void>;
 
-  getMyHousehold(): Promise<Household | null>;
+  listMyHouseholds(): Promise<Household[]>;
   createHousehold(name: string): Promise<Household>;
   joinHousehold(code: string): Promise<Household>;
   loadSnapshot(householdId: string, sinceDate: string): Promise<Snapshot>;
   subscribe(householdId: string, onChange: (e: ChangeEvent) => void): () => void;
 
   renameHousehold(householdId: string, name: string): Promise<void>;
+  setHouseholdTimezone(householdId: string, timezone: string): Promise<void>;
   regenerateInvite(householdId: string): Promise<string>;
   removeMember(householdId: string, userId: string): Promise<void>;
   leaveHousehold(householdId: string): Promise<void>;
   deleteHousehold(householdId: string): Promise<void>;
   updateMyProfile(householdId: string, displayName: string, color: string): Promise<void>;
+  updateMyReminders(householdId: string, prefs: Partial<Pick<Member, 'notify_late' | 'notify_daily'>>): Promise<void>;
 
   addPet(householdId: string, input: PetInput): Promise<Pet>;
   updatePet(id: string, input: PetInput): Promise<void>;
   deletePet(id: string): Promise<void>;
 
   addRoutine(householdId: string, input: RoutineInput): Promise<Routine>;
-  updateRoutine(id: string, input: RoutineInput): Promise<void>;
+  updateRoutine(id: string, input: RoutineInput & { active?: boolean }): Promise<void>;
   deleteRoutine(id: string): Promise<void>;
 
   completeTask(input: CompleteInput): Promise<CompleteResult>;
+  /** Finish a task someone moved to another day. Fails if it's already finished. */
+  finishMoved(logId: string, status: 'done' | 'skipped', note?: string | null): Promise<CompleteResult>;
+  updateLog(logId: string, patch: LogPatch): Promise<void>;
   undoTask(logId: string): Promise<void>;
+
+  addWeight(householdId: string, input: WeightInput): Promise<Weight>;
+  deleteWeight(id: string): Promise<void>;
+
+  createSitterLink(householdId: string, input: SitterLinkInput): Promise<SitterLink>;
+  revokeSitterLink(id: string): Promise<void>;
+  sitterView(token: string): Promise<SitterSnapshot>;
+  sitterComplete(token: string, routineId: string, date: string, slot: string, note?: string | null): Promise<CompleteResult>;
+  sitterUndo(token: string, logId: string): Promise<void>;
+
+  /** False in the demo: reminders need the real server. */
+  supportsPush: boolean;
+  getPushPublicKey(): Promise<string | null>;
+  savePushSubscription(keys: PushKeys): Promise<void>;
+  deletePushSubscription(endpoint: string): Promise<void>;
 }

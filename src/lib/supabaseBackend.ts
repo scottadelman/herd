@@ -2,7 +2,6 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { AppConfig } from './config';
 import type {
   Backend,
-  ChangeEvent,
   CompleteInput,
   CompleteResult,
   Household,
@@ -12,8 +11,11 @@ import type {
   Routine,
   RoutineInput,
   Session,
+  SitterLink,
+  SitterSnapshot,
   Snapshot,
   TaskLog,
+  Weight,
 } from './types';
 
 function fail(error: { message: string } | null): void {
@@ -25,11 +27,23 @@ function friendly(message: string): string {
   if (/email not confirmed/i.test(message)) return 'Confirm your email first. Check your inbox for the link.';
   if (/user already registered/i.test(message)) return 'An account with that email already exists. Sign in instead.';
   if (/password should be at least/i.test(message)) return 'Use a password with at least 6 characters.';
+  if (/pets_photo_check|value too long/i.test(message)) return 'That photo is too large. Try a different one.';
+  if (/row-level security/i.test(message)) return 'You can only change your own check-offs.';
+  if (/could not find the function|column .* does not exist|schema cache/i.test(message))
+    return 'The database needs the latest update. Run supabase/migrations/002 in the Supabase SQL Editor (see the README).';
   return message;
 }
 
 const toSession = (u: { id: string; email?: string | null } | null | undefined): Session | null =>
   u ? { userId: u.id, email: u.email ?? '' } : null;
+
+const localTimezone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+};
 
 export function createSupabaseBackend(config: AppConfig): Backend {
   const sb: SupabaseClient = createClient(config.supabaseUrl, config.supabaseAnonKey, {
@@ -43,8 +57,11 @@ export function createSupabaseBackend(config: AppConfig): Backend {
     return id;
   };
 
+  const redirect = () => window.location.origin + window.location.pathname;
+
   return {
     kind: 'supabase',
+    supportsPush: true,
 
     async getSession() {
       const { data } = await sb.auth.getSession();
@@ -60,10 +77,7 @@ export function createSupabaseBackend(config: AppConfig): Backend {
       const { data, error } = await sb.auth.signUp({
         email,
         password,
-        options: {
-          data: { display_name: displayName },
-          emailRedirectTo: window.location.origin + window.location.pathname,
-        },
+        options: { data: { display_name: displayName }, emailRedirectTo: redirect() },
       });
       fail(error);
       return { needsConfirmation: !data.session };
@@ -75,9 +89,7 @@ export function createSupabaseBackend(config: AppConfig): Backend {
     },
 
     async sendPasswordReset(email) {
-      const { error } = await sb.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin + window.location.pathname,
-      });
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: redirect() });
       fail(error);
     },
 
@@ -85,21 +97,21 @@ export function createSupabaseBackend(config: AppConfig): Backend {
       await sb.auth.signOut();
     },
 
-    async getMyHousehold() {
+    async listMyHouseholds() {
       const me = await uid();
       const { data, error } = await sb
         .from('household_members')
         .select('joined_at, household:households(*)')
         .eq('user_id', me)
-        .order('joined_at', { ascending: true })
-        .limit(1);
+        .order('joined_at', { ascending: true });
       fail(error);
-      const row = data?.[0] as unknown as { household: Household } | undefined;
-      return row?.household ?? null;
+      return ((data ?? []) as unknown as { household: Household | null }[])
+        .map((row) => row.household)
+        .filter((h): h is Household => !!h);
     },
 
     async createHousehold(name) {
-      const { data, error } = await sb.rpc('create_household', { p_name: name });
+      const { data, error } = await sb.rpc('create_household', { p_name: name, p_timezone: localTimezone() });
       fail(error);
       return data as Household;
     },
@@ -111,11 +123,11 @@ export function createSupabaseBackend(config: AppConfig): Backend {
     },
 
     async loadSnapshot(householdId, sinceDate) {
-      const [h, m, p, r, l] = await Promise.all([
+      const [h, m, p, r, l, w, s] = await Promise.all([
         sb.from('households').select('*').eq('id', householdId).single(),
         sb
           .from('household_members')
-          .select('user_id, role, color, joined_at, profile:profiles(display_name)')
+          .select('user_id, role, color, notify_late, notify_daily, joined_at, profile:profiles(display_name)')
           .eq('household_id', householdId)
           .order('joined_at'),
         sb.from('pets').select('*').eq('household_id', householdId).order('created_at'),
@@ -124,15 +136,25 @@ export function createSupabaseBackend(config: AppConfig): Backend {
           .from('task_logs')
           .select('*')
           .eq('household_id', householdId)
-          .gte('occurrence_date', sinceDate)
+          .or(`occurrence_date.gte.${sinceDate},snoozed_to.gte.${sinceDate}`)
           .order('done_at', { ascending: false })
-          .limit(1000),
+          .limit(2000),
+        sb.from('pet_weights').select('*').eq('household_id', householdId).order('weighed_on'),
+        sb
+          .from('sitter_links')
+          .select('*')
+          .eq('household_id', householdId)
+          .eq('revoked', false)
+          .gt('expires_at', new Date().toISOString())
+          .order('created_at'),
       ]);
-      for (const res of [h, m, p, r, l]) fail(res.error);
+      for (const res of [h, m, p, r, l, w, s]) fail(res.error);
       const members: Member[] = (m.data ?? []).map((row: any) => ({
         user_id: row.user_id,
         role: row.role,
         color: row.color,
+        notify_late: row.notify_late ?? true,
+        notify_daily: row.notify_daily ?? null,
         display_name: row.profile?.display_name ?? 'Someone',
       }));
       return {
@@ -141,12 +163,14 @@ export function createSupabaseBackend(config: AppConfig): Backend {
         pets: (p.data ?? []) as Pet[],
         routines: (r.data ?? []) as Routine[],
         logs: (l.data ?? []) as TaskLog[],
+        weights: ((w.data ?? []) as Weight[]).map((x) => ({ ...x, weight: Number(x.weight) })),
+        sitterLinks: (s.data ?? []) as SitterLink[],
       } satisfies Snapshot;
     },
 
     subscribe(householdId, onChange) {
       const channel = sb.channel(`household-${householdId}`);
-      const tables = ['task_logs', 'pets', 'routines', 'household_members', 'households'];
+      const tables = ['task_logs', 'pets', 'routines', 'household_members', 'households', 'pet_weights', 'sitter_links'];
       for (const table of tables) {
         const filter = table === 'households' ? `id=eq.${householdId}` : `household_id=eq.${householdId}`;
         for (const event of ['INSERT', 'UPDATE'] as const) {
@@ -168,6 +192,11 @@ export function createSupabaseBackend(config: AppConfig): Backend {
 
     async renameHousehold(householdId, name) {
       const { error } = await sb.from('households').update({ name }).eq('id', householdId);
+      fail(error);
+    },
+
+    async setHouseholdTimezone(householdId, timezone) {
+      const { error } = await sb.from('households').update({ timezone }).eq('id', householdId);
       fail(error);
     },
 
@@ -199,6 +228,12 @@ export function createSupabaseBackend(config: AppConfig): Backend {
       fail(a.error);
       const b = await sb.from('household_members').update({ color }).match({ household_id: householdId, user_id: me });
       fail(b.error);
+    },
+
+    async updateMyReminders(householdId, prefs) {
+      const me = await uid();
+      const { error } = await sb.from('household_members').update(prefs).match({ household_id: householdId, user_id: me });
+      fail(error);
     },
 
     async addPet(householdId, input: PetInput) {
@@ -247,11 +282,13 @@ export function createSupabaseBackend(config: AppConfig): Backend {
         slot: input.slot,
         title: input.title,
         note: input.note ?? null,
+        status: input.status ?? 'done',
+        snoozed_to: input.snoozedTo ?? null,
         done_by: me,
       };
       const { data, error } = await sb.from('task_logs').insert(row).select().single();
       if (!error) return { ok: true, log: data as TaskLog };
-      // 23505 = unique violation: someone else already checked this off.
+      // 23505 = unique violation: someone else already resolved this one.
       if ((error as { code?: string }).code === '23505' && input.routineId) {
         const { data: existing } = await sb
           .from('task_logs')
@@ -263,11 +300,94 @@ export function createSupabaseBackend(config: AppConfig): Backend {
       throw new Error(friendly(error.message));
     },
 
+    async finishMoved(logId, status, note) {
+      const me = await uid();
+      const { data, error } = await sb
+        .from('task_logs')
+        .update({ status, done_by: me, done_at: new Date().toISOString(), note: note ?? null })
+        .eq('id', logId)
+        .eq('status', 'snoozed')
+        .select();
+      fail(error);
+      if (data && data.length) return { ok: true, log: data[0] as TaskLog };
+      const { data: existing } = await sb.from('task_logs').select('*').eq('id', logId).maybeSingle();
+      return { ok: false, existing: (existing as TaskLog) ?? null };
+    },
+
+    async updateLog(logId, patch) {
+      const { error } = await sb.from('task_logs').update(patch).eq('id', logId);
+      fail(error);
+    },
+
     async undoTask(logId) {
       const { error } = await sb.from('task_logs').delete().eq('id', logId);
       fail(error);
     },
+
+    async addWeight(householdId, input) {
+      const { data, error } = await sb.from('pet_weights').insert({ ...input, household_id: householdId }).select().single();
+      fail(error);
+      return { ...(data as Weight), weight: Number((data as Weight).weight) };
+    },
+
+    async deleteWeight(id) {
+      const { error } = await sb.from('pet_weights').delete().eq('id', id);
+      fail(error);
+    },
+
+    async createSitterLink(householdId, input) {
+      const { data, error } = await sb.from('sitter_links').insert({ ...input, household_id: householdId }).select().single();
+      fail(error);
+      return data as SitterLink;
+    },
+
+    async revokeSitterLink(id) {
+      const { error } = await sb.from('sitter_links').update({ revoked: true }).eq('id', id);
+      fail(error);
+    },
+
+    async sitterView(token) {
+      const { data, error } = await sb.rpc('sitter_view', { p_token: token });
+      fail(error);
+      return data as SitterSnapshot;
+    },
+
+    async sitterComplete(token, routineId, date, slot, note) {
+      const { data, error } = await sb.rpc('sitter_complete', {
+        p_token: token,
+        p_routine: routineId,
+        p_date: date,
+        p_slot: slot,
+        p_note: note ?? null,
+      });
+      fail(error);
+      const res = data as { ok: boolean; log: TaskLog };
+      return res.ok ? { ok: true, log: res.log } : { ok: false, existing: res.log ?? null };
+    },
+
+    async sitterUndo(token, logId) {
+      const { error } = await sb.rpc('sitter_undo', { p_token: token, p_log: logId });
+      fail(error);
+    },
+
+    async getPushPublicKey() {
+      const { data, error } = await sb.rpc('get_push_public_key');
+      fail(error);
+      return (data as string | null) ?? null;
+    },
+
+    async savePushSubscription(keys) {
+      const { error } = await sb.rpc('save_push_subscription', {
+        p_endpoint: keys.endpoint,
+        p_p256dh: keys.p256dh,
+        p_auth: keys.auth,
+      });
+      fail(error);
+    },
+
+    async deletePushSubscription(endpoint) {
+      const { error } = await sb.rpc('delete_push_subscription', { p_endpoint: endpoint });
+      fail(error);
+    },
   };
 }
-
-export type { ChangeEvent };

@@ -135,9 +135,9 @@ export function AuthScreen({
 /** A tiny, static version of the Today list so the product explains itself. */
 function ExampleChart() {
   const rows = [
-    { emoji: '🐕', task: 'Breakfast', pet: 'Luna', who: 'Alex', color: MEMBER_COLORS[1] },
-    { emoji: '🐈', task: 'Scoop litter box', pet: 'Miso', who: 'Sam', color: MEMBER_COLORS[0] },
-    { emoji: '🐠', task: 'Feed', pet: 'Bubbles', who: null, color: '' },
+    { emoji: '🐕', task: 'Breakfast', pet: 'Biscuit', who: 'Priya', color: MEMBER_COLORS[1] },
+    { emoji: '🐈‍⬛', task: 'Thyroid pill', pet: 'Olive, ½ tablet', who: 'Jamie', color: MEMBER_COLORS[0] },
+    { emoji: '🦜', task: 'Food and water', pet: 'Kiwi', who: null, color: '' },
   ];
   return (
     <ul className="example-chart" aria-label="Example: today’s pet care, checked off by different people">

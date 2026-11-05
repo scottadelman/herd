@@ -1,0 +1,229 @@
+// Decides which reminders to send right now. Pure code with no imports, so it
+// runs in the Supabase function and in the app's tests alike.
+//
+// The schedule rules here mirror src/lib/schedule.ts and src/lib/day.ts; a
+// test checks that the two agree.
+
+export interface RHousehold {
+  id: string;
+  name: string;
+  timezone: string | null;
+}
+export interface RMember {
+  household_id: string;
+  user_id: string;
+  notify_late: boolean;
+  notify_daily: string | null;
+}
+export interface RPet {
+  id: string;
+  household_id: string;
+  name: string;
+}
+export interface RRoutine {
+  id: string;
+  household_id: string;
+  pet_id: string;
+  title: string;
+  kind: 'daily' | 'weekly' | 'interval' | 'once';
+  category: 'care' | 'medication' | 'vaccine' | 'vet';
+  dose: string | null;
+  times: string[];
+  weekdays: number[];
+  interval_days: number | null;
+  start_date: string;
+  assignee: string | null;
+  active: boolean;
+}
+export interface RLog {
+  routine_id: string | null;
+  occurrence_date: string;
+  slot: string;
+  status: 'done' | 'skipped' | 'snoozed';
+  snoozed_to: string | null;
+}
+export interface ReminderInput {
+  households: RHousehold[];
+  members: RMember[];
+  pets: RPet[];
+  routines: RRoutine[];
+  logs: RLog[];
+  alreadySent: Set<string>;
+}
+export interface Reminder {
+  userId: string;
+  key: string;
+  title: string;
+  body: string;
+  tag: string;
+}
+
+/** Minutes after a task's time before anyone is reminded. */
+export const LATE_AFTER_MIN = 30;
+/** Stop reminding about a late task after this long. */
+const LATE_UNTIL_MIN = 180;
+/** How long after the chosen time the morning summary can still go out. */
+const DAILY_WINDOW_MIN = 15;
+
+const ANY = 'any';
+
+export function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000);
+}
+
+export function addDays(iso: string, n: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+function weekdayOf(iso: string): number {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+const toMin = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
+
+export function formatTime(hhmm: string): string {
+  const h = Number(hhmm.slice(0, 2));
+  const m = hhmm.slice(3, 5);
+  return `${h % 12 === 0 ? 12 : h % 12}:${m} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+export function occurrences(r: RRoutine, date: string): string[] {
+  if (!r.active || daysBetween(r.start_date, date) < 0) return [];
+  const slots = r.times.length ? [...r.times].sort() : [ANY];
+  switch (r.kind) {
+    case 'daily':
+      return slots;
+    case 'weekly':
+      return r.weekdays.includes(weekdayOf(date)) ? slots : [];
+    case 'interval': {
+      const n = r.interval_days ?? 0;
+      return n >= 1 && daysBetween(r.start_date, date) % n === 0 ? slots : [];
+    }
+    case 'once':
+      return date === r.start_date ? slots : [];
+  }
+}
+
+/** The local calendar date and minute of the day in a time zone. */
+export function localNow(now: Date, timezone: string | null): { date: string; minutes: number } {
+  let tz = timezone || 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+  } catch {
+    tz = 'UTC';
+  }
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value]),
+  );
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, minutes: (Number(parts.hour) % 24) * 60 + Number(parts.minute) };
+}
+
+export interface OpenItem {
+  routine: RRoutine;
+  origDate: string;
+  slot: string;
+}
+
+/** Tasks still to do on `date` in one household, after skips and snoozes. */
+export function openItems(routines: RRoutine[], logs: RLog[], date: string): OpenItem[] {
+  const byKey = new Map<string, RLog>();
+  for (const l of logs) if (l.routine_id) byKey.set(`${l.routine_id}|${l.occurrence_date}|${l.slot}`, l);
+  const byId = new Map(routines.map((r) => [r.id, r]));
+  const out: OpenItem[] = [];
+  for (const r of routines) {
+    for (const slot of occurrences(r, date)) {
+      const log = byKey.get(`${r.id}|${date}|${slot}`);
+      if (!log || (log.status === 'snoozed' && (!log.snoozed_to || log.snoozed_to === date))) {
+        out.push({ routine: r, origDate: date, slot });
+      }
+    }
+  }
+  for (const l of logs) {
+    if (l.status !== 'snoozed' || l.snoozed_to !== date || l.occurrence_date === date || !l.routine_id) continue;
+    const r = byId.get(l.routine_id);
+    if (r?.active) out.push({ routine: r, origDate: l.occurrence_date, slot: l.slot });
+  }
+  return out;
+}
+
+function listWords(items: string[]): string {
+  if (items.length <= 1) return items.join('');
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+const HEALTH = new Set(['medication', 'vaccine', 'vet']);
+
+export function computeReminders(input: ReminderInput, now: Date): Reminder[] {
+  const out: Reminder[] = [];
+  const petName = new Map(input.pets.map((p) => [p.id, p.name]));
+
+  for (const h of input.households) {
+    const members = input.members.filter((m) => m.household_id === h.id);
+    if (!members.length) continue;
+    const routines = input.routines.filter((r) => r.household_id === h.id && petName.has(r.pet_id));
+    const { date, minutes } = localNow(now, h.timezone);
+    const open = openItems(routines, input.logs, date);
+
+    // Late tasks: 30 minutes past their time and still open.
+    for (const item of open) {
+      if (item.slot === ANY) continue;
+      const late = minutes - toMin(item.slot);
+      if (late < LATE_AFTER_MIN || late >= LATE_UNTIL_MIN) continue;
+      const r = item.routine;
+      const assignee = r.assignee ? members.find((m) => m.user_id === r.assignee) : undefined;
+      const recipients = (assignee ? [assignee] : members).filter((m) => m.notify_late);
+      const pet = petName.get(r.pet_id) ?? 'your pet';
+      for (const m of recipients) {
+        const key = `late|${r.id}|${item.origDate}|${item.slot}|${m.user_id}`;
+        if (input.alreadySent.has(key)) continue;
+        const dose = r.category === 'medication' && r.dose ? `${r.dose}, ` : '';
+        out.push({
+          userId: m.user_id,
+          key,
+          title: `${r.title} for ${pet} is late`,
+          body: `${dose}due at ${formatTime(item.slot)}. Open Herd to check it off or snooze it.`.replace(/^./, (c) => c.toUpperCase()),
+          tag: `late-${r.id}-${item.origDate}-${item.slot}`,
+        });
+      }
+    }
+
+    // Morning summary at each person's chosen time.
+    const tomorrowHealth = openItems(routines, input.logs, addDays(date, 1)).filter((i) => HEALTH.has(i.routine.category));
+    for (const m of members) {
+      if (!m.notify_daily) continue;
+      const since = minutes - toMin(m.notify_daily);
+      if (since < 0 || since >= DAILY_WINDOW_MIN) continue;
+      const key = `daily|${h.id}|${m.user_id}|${date}`;
+      if (input.alreadySent.has(key)) continue;
+      if (!open.length && !tomorrowHealth.length) continue;
+      const pets = [...new Set(open.map((i) => petName.get(i.routine.pet_id) ?? ''))].filter(Boolean);
+      const health = open.filter((i) => HEALTH.has(i.routine.category) || i.routine.kind === 'once');
+      const parts: string[] = [];
+      if (open.length) parts.push(`${open.length} ${open.length === 1 ? 'task' : 'tasks'} for ${listWords(pets)}.`);
+      if (health.length) {
+        parts.push(`Due today: ${listWords([...new Set(health.map((i) => i.routine.title))])}.`);
+      }
+      if (tomorrowHealth.length) {
+        const t = tomorrowHealth.map((i) => (i.slot === ANY ? i.routine.title : `${i.routine.title} at ${formatTime(i.slot)}`));
+        parts.push(`Tomorrow: ${listWords([...new Set(t)])}.`);
+      }
+      out.push({ userId: m.user_id, key, title: `Today at ${h.name}`, body: parts.join(' '), tag: `daily-${h.id}` });
+    }
+  }
+  return out;
+}

@@ -1,27 +1,33 @@
 import { addDays, todayISO } from './dates';
+import { buildDay } from './day';
 import { MEMBER_COLORS } from './people';
-import { occurrencesForDate, slotKey } from './schedule';
+import { occurrencesForDate } from './schedule';
 import type {
   Backend,
   ChangeEvent,
   CompleteInput,
+  CompleteResult,
   Household,
   Member,
   Pet,
   Routine,
   Session,
+  SitterLink,
+  SitterSnapshot,
   Snapshot,
   TaskLog,
+  Weight,
 } from './types';
 
 // A self-contained backend that runs entirely in the browser. It powers
 // "Try the demo" and the preview build, and simulates a second household
-// member (Alex) checking something off a few seconds after you arrive, so the
-// live-sync behaviour is visible without a server.
+// member (Priya) checking something off a few seconds after you arrive, so
+// live sync is visible without a server.
 
-const STORE_KEY = 'herd-demo-v1';
-const ME = 'demo-you';
-const ALEX = 'demo-alex';
+const STORE_KEY = 'herd-demo-v2';
+const ME = 'demo-jamie';
+const PRIYA = 'demo-priya';
+const HID = 'demo-household';
 
 interface DemoState {
   household: Household;
@@ -29,10 +35,14 @@ interface DemoState {
   pets: Pet[];
   routines: Routine[];
   logs: TaskLog[];
+  weights: Weight[];
+  sitterLinks: SitterLink[];
 }
 
 let counter = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(counter++).toString(36)}`;
+const randomToken = () =>
+  Array.from({ length: 32 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
 
 function stampAt(date: string, hhmm: string, jitterMin: number): string {
   const [y, m, d] = date.split('-').map(Number);
@@ -42,117 +52,196 @@ function stampAt(date: string, hhmm: string, jitterMin: number): string {
 
 function seed(): DemoState {
   const today = todayISO();
-  const hid = 'demo-household';
+  const now = new Date();
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const created = new Date().toISOString();
+
   const pet = (id: string, name: string, species: Pet['species'], emoji: string, notes: string | null): Pet => ({
     id,
-    household_id: hid,
+    household_id: HID,
     name,
     species,
     emoji,
     notes,
-    created_at: new Date().toISOString(),
+    photo: null,
+    created_at: created,
   });
-  const routine = (
-    id: string,
-    pet_id: string,
-    title: string,
-    kind: Routine['kind'],
-    times: string[],
-    extra: Partial<Routine> = {},
-  ): Routine => ({
+  const routine = (id: string, pet_id: string, title: string, times: string[], extra: Partial<Routine> = {}): Routine => ({
     id,
-    household_id: hid,
+    household_id: HID,
     pet_id,
     title,
-    kind,
+    kind: 'daily',
+    category: 'care',
+    dose: null,
     times,
     weekdays: [],
     interval_days: null,
-    start_date: addDays(today, -14),
+    start_date: addDays(today, -30),
     assignee: null,
     notes: null,
     active: true,
-    created_at: new Date().toISOString(),
+    created_at: created,
     ...extra,
   });
 
   const pets = [
-    pet('pet-luna', 'Luna', 'dog', '🐕', 'Allergic to chicken. Two cups of kibble per meal.'),
-    pet('pet-miso', 'Miso', 'cat', '🐈', null),
-    pet('pet-bubbles', 'Bubbles', 'fish', '🐠', 'A pinch of flakes, no more.'),
-  ];
-  const routines = [
-    routine('r-luna-bfast', 'pet-luna', 'Breakfast', 'daily', ['07:00']),
-    routine('r-luna-walk-am', 'pet-luna', 'Morning walk', 'daily', ['07:30'], { assignee: ALEX }),
-    routine('r-luna-dinner', 'pet-luna', 'Dinner', 'daily', ['18:00']),
-    routine('r-luna-walk-pm', 'pet-luna', 'Evening walk', 'daily', ['20:00'], { assignee: ME }),
-    routine('r-luna-flea', 'pet-luna', 'Flea and tick prevention', 'interval', [], {
-      interval_days: 30,
-      start_date: addDays(today, -28),
-    }),
-    routine('r-miso-bfast', 'pet-miso', 'Breakfast', 'daily', ['07:00']),
-    routine('r-miso-dinner', 'pet-miso', 'Dinner', 'daily', ['18:00']),
-    routine('r-miso-litter', 'pet-miso', 'Scoop litter box', 'daily', []),
-    routine('r-bubbles-feed', 'pet-bubbles', 'Feed', 'daily', ['08:00']),
-    routine('r-bubbles-water', 'pet-bubbles', 'Water change', 'interval', [], {
-      interval_days: 7,
-      start_date: addDays(today, -14),
-    }),
+    pet('pet-biscuit', 'Biscuit', 'dog', '🐕', 'Two cups of kibble per meal. Allergic to chicken. Pulls toward squirrels, so keep a short leash.'),
+    pet('pet-olive', 'Olive', 'cat', '🐈‍⬛', 'Wet food in the morning, dry at night. Hides under the bed during storms.'),
+    pet('pet-kiwi', 'Kiwi', 'bird', '🦜', 'Seed mix plus fresh greens. Cover the cage around 9 PM.'),
   ];
 
-  // Fill in the last few days as fully done, alternating who did what, and
-  // today's morning tasks if the morning has passed.
+  const routines = [
+    routine('r-biscuit-bfast', 'pet-biscuit', 'Breakfast', ['07:00']),
+    routine('r-biscuit-walk-am', 'pet-biscuit', 'Morning walk', ['07:30'], { assignee: PRIYA }),
+    routine('r-biscuit-joint', 'pet-biscuit', 'Joint supplement', ['07:00'], {
+      category: 'medication',
+      dose: '1 tablet with breakfast',
+    }),
+    routine('r-biscuit-walk-mid', 'pet-biscuit', 'Midday walk', ['12:30'], { kind: 'weekly', weekdays: [1, 2, 3, 4, 5] }),
+    routine('r-biscuit-dinner', 'pet-biscuit', 'Dinner', ['18:00']),
+    routine('r-biscuit-walk-pm', 'pet-biscuit', 'Evening walk', ['20:00'], { assignee: ME }),
+    routine('r-biscuit-heartworm', 'pet-biscuit', 'Heartworm chewable', [], {
+      kind: 'interval',
+      interval_days: 30,
+      start_date: addDays(today, -30),
+      category: 'medication',
+      dose: '1 chewable',
+    }),
+    routine('r-biscuit-rabies', 'pet-biscuit', 'Rabies booster', [], {
+      kind: 'once',
+      start_date: addDays(today, 12),
+      category: 'vaccine',
+      notes: 'Bring the paper certificate from last year.',
+    }),
+    routine('r-biscuit-checkup', 'pet-biscuit', 'Annual checkup', ['10:30'], {
+      kind: 'once',
+      start_date: addDays(today, 5),
+      category: 'vet',
+      notes: 'Dr. Lee. Ask about the itchy paw.',
+    }),
+    routine('r-olive-bfast', 'pet-olive', 'Breakfast', ['07:00']),
+    routine('r-olive-dinner', 'pet-olive', 'Dinner', ['18:00']),
+    routine('r-olive-thyroid', 'pet-olive', 'Thyroid pill', ['08:00', '20:00'], {
+      category: 'medication',
+      dose: '½ tablet in a treat',
+    }),
+    routine('r-olive-litter', 'pet-olive', 'Scoop litter box', []),
+    routine('r-kiwi-food', 'pet-kiwi', 'Food and water', ['08:00']),
+    routine('r-kiwi-cover', 'pet-kiwi', 'Cover the cage', ['21:00']),
+    routine('r-kiwi-clean', 'pet-kiwi', 'Clean cage', [], { kind: 'interval', interval_days: 7, start_date: addDays(today, -8) }),
+  ];
+
+  const maria: SitterLink = {
+    id: 'sitter-maria',
+    household_id: HID,
+    token: 'demo-maria',
+    label: 'Maria',
+    pet_ids: ['pet-biscuit'],
+    expires_at: new Date(Date.now() + 6 * 86_400_000).toISOString(),
+    revoked: false,
+    created_by: ME,
+    created_at: created,
+  };
+
+  const log = (r: Routine, date: string, slot: string, extra: Partial<TaskLog>): TaskLog => ({
+    id: newId('log'),
+    household_id: HID,
+    pet_id: r.pet_id,
+    routine_id: r.id,
+    occurrence_date: date,
+    slot,
+    title: r.title,
+    note: null,
+    status: 'done',
+    snoozed_to: null,
+    done_by: ME,
+    sitter_link_id: null,
+    sitter_name: null,
+    done_at: stampAt(date, slot, 4),
+    ...extra,
+  });
+
+  // The last few days are fully taken care of, alternating who did what.
+  // Maria the dog walker handles weekday midday walks.
   const logs: TaskLog[] = [];
-  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
   let n = 0;
-  for (let back = 4; back >= 0; back--) {
+  for (let back = 5; back >= 0; back--) {
     const date = addDays(today, -back);
-    let i = 0;
     for (const r of routines) {
       for (const slot of occurrencesForDate(r, date)) {
-        i++;
         if (back === 0) {
           const due = slot === 'any' ? 24 * 60 : Number(slot.slice(0, 2)) * 60 + Number(slot.slice(3));
           if (due > nowMin - 20 || due > 9 * 60) continue;
         }
-        const who = r.assignee ?? (n++ % 2 === 0 ? ALEX : ME);
-        logs.push({
-          id: newId('log'),
-          household_id: hid,
-          pet_id: r.pet_id,
-          routine_id: r.id,
-          occurrence_date: date,
-          slot,
-          title: r.title,
-          note: null,
-          done_by: who,
-          done_at: stampAt(date, slot, 3 + (i % 9)),
-        });
+        if (r.id === 'r-kiwi-clean' && back === 1) {
+          logs.push(log(r, date, slot, { status: 'snoozed', snoozed_to: today, done_by: PRIYA, done_at: stampAt(date, '19:10', 0) }));
+          continue;
+        }
+        if (r.id === 'r-biscuit-walk-pm' && back === 3) {
+          logs.push(log(r, date, slot, { status: 'skipped', note: 'Pouring rain. Played fetch inside.', done_at: stampAt(date, '20:05', 0) }));
+          continue;
+        }
+        if (r.id === 'r-biscuit-walk-mid') {
+          logs.push(log(r, date, slot, { done_by: null, sitter_link_id: maria.id, sitter_name: 'Maria', done_at: stampAt(date, slot, 9) }));
+          continue;
+        }
+        const who = r.assignee ?? (n++ % 2 === 0 ? PRIYA : ME);
+        logs.push(log(r, date, slot, { done_by: who, done_at: stampAt(date, slot, 3 + (n % 9)) }));
       }
     }
   }
   logs.push({
     id: newId('log'),
-    household_id: hid,
-    pet_id: 'pet-luna',
+    household_id: HID,
+    pet_id: 'pet-biscuit',
     routine_id: null,
-    occurrence_date: addDays(today, -1),
+    occurrence_date: addDays(today, -2),
     slot: 'adhoc',
     title: 'Bath',
     note: 'Rolled in something at the park.',
-    done_by: ALEX,
-    done_at: stampAt(addDays(today, -1), '16:10', 0),
+    status: 'done',
+    snoozed_to: null,
+    done_by: PRIYA,
+    sitter_link_id: null,
+    sitter_name: null,
+    done_at: stampAt(addDays(today, -2), '16:10', 0),
   });
 
+  const weight = (pet_id: string, daysAgo: number, w: number): Weight => ({
+    id: newId('w'),
+    household_id: HID,
+    pet_id,
+    weighed_on: addDays(today, -daysAgo),
+    weight: w,
+    unit: 'lb',
+    note: null,
+    recorded_by: ME,
+    created_at: created,
+  });
+  const weights = [
+    weight('pet-biscuit', 150, 66.2),
+    weight('pet-biscuit', 120, 65.4),
+    weight('pet-biscuit', 90, 64.8),
+    weight('pet-biscuit', 60, 63.9),
+    weight('pet-biscuit', 30, 63.1),
+    weight('pet-biscuit', 3, 62.4),
+    weight('pet-olive', 90, 10.6),
+    weight('pet-olive', 45, 10.2),
+    weight('pet-olive', 10, 9.9),
+  ];
+
   return {
-    household: { id: hid, name: 'Demo household', invite_code: 'DEMO4PET', created_by: ME },
+    household: { id: HID, name: 'The Parkers', invite_code: 'HXK4P9TQ', created_by: ME, timezone: null },
     members: [
-      { user_id: ME, role: 'owner', color: MEMBER_COLORS[0], display_name: 'Sam' },
-      { user_id: ALEX, role: 'member', color: MEMBER_COLORS[1], display_name: 'Alex' },
+      { user_id: ME, role: 'owner', color: MEMBER_COLORS[0], display_name: 'Jamie', notify_late: true, notify_daily: '07:30' },
+      { user_id: PRIYA, role: 'member', color: MEMBER_COLORS[1], display_name: 'Priya', notify_late: true, notify_daily: null },
     ],
     pets,
     routines,
     logs: logs.sort((a, b) => b.done_at.localeCompare(a.done_at)),
+    weights,
+    sitterLinks: [maria],
   };
 }
 
@@ -173,13 +262,14 @@ function save(s: DemoState) {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({ ...s, seededOn: todayISO() }));
   } catch {
-    /* storage can be unavailable in private windows; the demo still works in memory */
+    /* storage can be unavailable or full (photos); the demo keeps working in memory */
   }
 }
 
 export function resetDemo() {
   try {
     localStorage.removeItem(STORE_KEY);
+    localStorage.removeItem('herd-demo-v1');
   } catch {
     /* ignore */
   }
@@ -188,10 +278,10 @@ export function resetDemo() {
 export function createDemoBackend(): Backend {
   let state: DemoState = load() ?? seed();
   save(state);
-  let session: Session | null = { userId: ME, email: 'sam@example.com' };
+  let session: Session | null = { userId: ME, email: 'jamie@example.com' };
   const authListeners = new Set<(s: Session | null) => void>();
   const changeListeners = new Set<(e: ChangeEvent) => void>();
-  let alexTimer: number | undefined;
+  let priyaTimer: number | undefined;
 
   const commit = (e: ChangeEvent) => {
     save(state);
@@ -199,37 +289,62 @@ export function createDemoBackend(): Backend {
   };
   const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
   const pause = () => new Promise((r) => setTimeout(r, 120));
+  const findLog = (routineId: string, date: string, slot: string) =>
+    state.logs.find((l) => l.routine_id === routineId && l.occurrence_date === date && l.slot === slot);
 
-  function scheduleAlex() {
-    window.clearTimeout(alexTimer);
-    alexTimer = window.setTimeout(() => {
-      // Alex checks off the earliest open task today.
-      const today = todayISO();
-      const done = new Set(state.logs.map((l) => (l.routine_id ? slotKey(l.routine_id, l.occurrence_date, l.slot) : '')));
-      const open = state.routines
-        .flatMap((r) => occurrencesForDate(r, today).map((slot) => ({ r, slot })))
-        .filter(({ r, slot }) => !done.has(slotKey(r.id, today, slot)) && r.assignee !== ME)
-        .sort((a, b) => (a.slot === 'any' ? '' : a.slot).localeCompare(b.slot === 'any' ? '' : b.slot));
+  const newLog = (input: Omit<CompleteInput, 'householdId'>, who: Partial<TaskLog>): TaskLog => ({
+    id: newId('log'),
+    household_id: HID,
+    pet_id: input.petId,
+    routine_id: input.routineId,
+    occurrence_date: input.date,
+    slot: input.slot,
+    title: input.title,
+    note: input.note ?? null,
+    status: input.status ?? 'done',
+    snoozed_to: input.snoozedTo ?? null,
+    done_by: ME,
+    sitter_link_id: null,
+    sitter_name: null,
+    done_at: new Date().toISOString(),
+    ...who,
+  });
+
+  function schedulePriya() {
+    window.clearTimeout(priyaTimer);
+    priyaTimer = window.setTimeout(() => {
+      // Priya checks off the earliest open task today that isn't yours.
+      const open = buildDay(state, todayISO()).filter((i) => i.state === 'open' && i.routine.assignee !== ME);
       const pick = open[0];
       if (!pick) return;
-      state.logs.unshift({
-        id: newId('log'),
-        household_id: state.household.id,
-        pet_id: pick.r.pet_id,
-        routine_id: pick.r.id,
-        occurrence_date: today,
-        slot: pick.slot,
-        title: pick.r.title,
-        note: null,
-        done_by: ALEX,
-        done_at: new Date().toISOString(),
-      });
+      if (pick.log) {
+        state.logs = state.logs.map((l) =>
+          l.id === pick.log!.id ? { ...l, status: 'done', done_by: PRIYA, done_at: new Date().toISOString() } : l,
+        );
+      } else {
+        state.logs.unshift(
+          newLog(
+            { petId: pick.pet.id, routineId: pick.routine.id, date: pick.origDate, slot: pick.slot, title: pick.routine.title },
+            { done_by: PRIYA },
+          ),
+        );
+      }
       commit({ table: 'task_logs', type: 'INSERT' });
     }, 7000);
   }
 
+  function linkFor(token: string): SitterLink {
+    const l = state.sitterLinks.find((x) => x.token === token);
+    if (!l || l.revoked || new Date(l.expires_at) <= new Date()) {
+      throw new Error('This sitter link has expired or was turned off. Ask the owner for a new one.');
+    }
+    return l;
+  }
+  const allowedPets = (l: SitterLink) => state.pets.filter((p) => !l.pet_ids.length || l.pet_ids.includes(p.id));
+
   return {
     kind: 'demo',
+    supportsPush: false,
     async getSession() {
       return session;
     },
@@ -243,35 +358,36 @@ export function createDemoBackend(): Backend {
     async signIn() {},
     async sendPasswordReset() {},
     async signOut() {
-      window.clearTimeout(alexTimer);
+      window.clearTimeout(priyaTimer);
       session = null;
       authListeners.forEach((cb) => cb(null));
     },
-    async getMyHousehold() {
-      return clone(state.household);
+    async listMyHouseholds() {
+      return [clone(state.household)];
     },
     async createHousehold() {
-      return clone(state.household);
+      throw new Error('The demo has one household. Create an account to make your own.');
     },
     async joinHousehold() {
-      return clone(state.household);
+      throw new Error('The demo has one household. Create an account to join a real one.');
     },
     async loadSnapshot(): Promise<Snapshot> {
       await pause();
-      return clone(state);
+      return clone({ ...state, sitterLinks: state.sitterLinks.filter((l) => !l.revoked && new Date(l.expires_at) > new Date()) });
     },
     subscribe(_hid, onChange) {
       changeListeners.add(onChange);
-      scheduleAlex();
+      schedulePriya();
       return () => {
         changeListeners.delete(onChange);
-        window.clearTimeout(alexTimer);
+        window.clearTimeout(priyaTimer);
       };
     },
     async renameHousehold(_hid, name) {
       state.household.name = name;
       commit({ table: 'households', type: 'UPDATE' });
     },
+    async setHouseholdTimezone() {},
     async regenerateInvite() {
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
       state.household.invite_code = Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
@@ -292,6 +408,10 @@ export function createDemoBackend(): Backend {
       state.members = state.members.map((m) => (m.user_id === ME ? { ...m, display_name: displayName, color } : m));
       commit({ table: 'household_members', type: 'UPDATE' });
     },
+    async updateMyReminders(_hid, prefs) {
+      state.members = state.members.map((m) => (m.user_id === ME ? { ...m, ...prefs } : m));
+      commit({ table: 'household_members', type: 'UPDATE' });
+    },
     async addPet(hid, input) {
       const pet: Pet = { ...input, id: newId('pet'), household_id: hid, created_at: new Date().toISOString() };
       state.pets.push(pet);
@@ -306,6 +426,7 @@ export function createDemoBackend(): Backend {
       state.pets = state.pets.filter((p) => p.id !== id);
       state.routines = state.routines.filter((r) => r.pet_id !== id);
       state.logs = state.logs.filter((l) => l.pet_id !== id);
+      state.weights = state.weights.filter((w) => w.pet_id !== id);
       commit({ table: 'pets', type: 'DELETE' });
     },
     async addRoutine(hid, input) {
@@ -323,32 +444,113 @@ export function createDemoBackend(): Backend {
       state.logs = state.logs.map((l) => (l.routine_id === id ? { ...l, routine_id: null } : l));
       commit({ table: 'routines', type: 'DELETE' });
     },
-    async completeTask(input: CompleteInput) {
+    async completeTask(input): Promise<CompleteResult> {
       if (input.routineId) {
-        const existing = state.logs.find(
-          (l) => l.routine_id === input.routineId && l.occurrence_date === input.date && l.slot === input.slot,
-        );
+        const existing = findLog(input.routineId, input.date, input.slot);
         if (existing) return { ok: false, existing: clone(existing) };
       }
-      const log: TaskLog = {
-        id: newId('log'),
-        household_id: input.householdId,
-        pet_id: input.petId,
-        routine_id: input.routineId,
-        occurrence_date: input.date,
-        slot: input.slot,
-        title: input.title,
-        note: input.note ?? null,
-        done_by: ME,
-        done_at: new Date().toISOString(),
-      };
+      const log = newLog(input, {});
       state.logs.unshift(log);
       commit({ table: 'task_logs', type: 'INSERT' });
       return { ok: true, log: clone(log) };
+    },
+    async finishMoved(logId, status, note) {
+      const existing = state.logs.find((l) => l.id === logId);
+      if (!existing || existing.status !== 'snoozed') return { ok: false, existing: existing ? clone(existing) : null };
+      const updated: TaskLog = { ...existing, status, done_by: ME, done_at: new Date().toISOString(), note: note ?? null };
+      state.logs = state.logs.map((l) => (l.id === logId ? updated : l));
+      commit({ table: 'task_logs', type: 'UPDATE' });
+      return { ok: true, log: clone(updated) };
+    },
+    async updateLog(logId, patch) {
+      const existing = state.logs.find((l) => l.id === logId);
+      if (!existing) return;
+      const next = { ...existing, ...patch };
+      if (next.status !== 'snoozed' && next.done_by !== ME) throw new Error('You can only change your own check-offs.');
+      state.logs = state.logs.map((l) => (l.id === logId ? next : l));
+      commit({ table: 'task_logs', type: 'UPDATE' });
     },
     async undoTask(logId) {
       state.logs = state.logs.filter((l) => l.id !== logId);
       commit({ table: 'task_logs', type: 'DELETE' });
     },
+    async addWeight(hid, input) {
+      const w: Weight = { ...input, id: newId('w'), household_id: hid, recorded_by: ME, created_at: new Date().toISOString() };
+      state.weights.push(w);
+      commit({ table: 'pet_weights', type: 'INSERT' });
+      return clone(w);
+    },
+    async deleteWeight(id) {
+      state.weights = state.weights.filter((w) => w.id !== id);
+      commit({ table: 'pet_weights', type: 'DELETE' });
+    },
+    async createSitterLink(hid, input) {
+      const link: SitterLink = {
+        ...input,
+        id: newId('sitter'),
+        household_id: hid,
+        token: randomToken(),
+        revoked: false,
+        created_by: ME,
+        created_at: new Date().toISOString(),
+      };
+      state.sitterLinks.push(link);
+      commit({ table: 'sitter_links', type: 'INSERT' });
+      return clone(link);
+    },
+    async revokeSitterLink(id) {
+      state.sitterLinks = state.sitterLinks.map((l) => (l.id === id ? { ...l, revoked: true } : l));
+      commit({ table: 'sitter_links', type: 'UPDATE' });
+    },
+    async sitterView(token): Promise<SitterSnapshot> {
+      await pause();
+      const l = linkFor(token);
+      const today = todayISO();
+      const pets = allowedPets(l);
+      const ids = new Set(pets.map((p) => p.id));
+      const near = (d: string | null) => !!d && Math.abs((Date.parse(d) - Date.parse(today)) / 86_400_000) <= 1;
+      return clone({
+        link: { id: l.id, label: l.label, expires_at: l.expires_at },
+        today,
+        household: { id: HID, name: state.household.name },
+        members: state.members.map(({ user_id, display_name, color }) => ({ user_id, display_name, color })),
+        pets,
+        routines: state.routines.filter((r) => ids.has(r.pet_id) && r.active).map((r) => ({ ...r, assignee: null })),
+        logs: state.logs.filter((x) => ids.has(x.pet_id) && x.routine_id && (near(x.occurrence_date) || near(x.snoozed_to))),
+      });
+    },
+    async sitterComplete(token, routineId, date, slot, note) {
+      const l = linkFor(token);
+      const r = state.routines.find((x) => x.id === routineId);
+      if (!r || !allowedPets(l).some((p) => p.id === r.pet_id)) throw new Error('That task isn’t part of this sitter link.');
+      const existing = findLog(routineId, date, slot);
+      const sitter = { done_by: null, sitter_link_id: l.id, sitter_name: l.label };
+      if (existing) {
+        if (existing.status !== 'snoozed') return { ok: false, existing: clone(existing) };
+        const updated: TaskLog = { ...existing, ...sitter, status: 'done', note: note ?? null, done_at: new Date().toISOString() };
+        state.logs = state.logs.map((x) => (x.id === existing.id ? updated : x));
+        commit({ table: 'task_logs', type: 'UPDATE' });
+        return { ok: true, log: clone(updated) };
+      }
+      const log = newLog({ petId: r.pet_id, routineId, date, slot, title: r.title, note }, sitter);
+      state.logs.unshift(log);
+      commit({ table: 'task_logs', type: 'INSERT' });
+      return { ok: true, log: clone(log) };
+    },
+    async sitterUndo(token, logId) {
+      const l = linkFor(token);
+      const t = state.logs.find((x) => x.id === logId && x.sitter_link_id === l.id);
+      if (!t) throw new Error('Only your own check-offs from today can be undone.');
+      if (t.snoozed_to) state.logs = state.logs.map((x) => (x.id === logId ? { ...x, status: 'snoozed', note: null } : x));
+      else state.logs = state.logs.filter((x) => x.id !== logId);
+      commit({ table: 'task_logs', type: 'DELETE' });
+    },
+    async getPushPublicKey() {
+      return null;
+    },
+    async savePushSubscription() {
+      throw new Error('Reminders work in the real app, not the demo.');
+    },
+    async deletePushSubscription() {},
   };
 }

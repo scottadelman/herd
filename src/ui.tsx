@@ -21,13 +21,50 @@ export function Stamp({
   );
 }
 
-export function PetAvatar({ emoji, size = 'md' }: { emoji: string; size?: 'sm' | 'md' | 'lg' }) {
+export function PetAvatar({
+  emoji,
+  photo,
+  size = 'md',
+}: {
+  emoji: string;
+  photo?: string | null;
+  size?: 'sm' | 'md' | 'lg' | 'xl';
+}) {
   return (
-    <span className={`pet-avatar pet-avatar-${size}`} aria-hidden="true">
-      {emoji}
+    <span className={`pet-avatar pet-avatar-${size}${photo ? ' pet-avatar-photo' : ''}`} aria-hidden="true">
+      {photo ? <img src={photo} alt="" /> : emoji}
     </span>
   );
 }
+
+/** A small mark for health tasks, colored by category, always paired with text. */
+export function CategoryMark({ category }: { category: 'care' | 'medication' | 'vaccine' | 'vet' }) {
+  if (category === 'care') return null;
+  return <span className={`cat-mark cat-${category}`} aria-hidden="true">{CATEGORY_ICONS[category]}</span>;
+}
+
+const small = (d: ReactNode) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {d}
+  </svg>
+);
+
+const CATEGORY_ICONS = {
+  medication: small(
+    <>
+      <g transform="rotate(-45 12 12)">
+        <rect x="3.5" y="8" width="17" height="8" rx="4" />
+        <path d="M3.5 12a4 4 0 0 1 4-4H12v8H7.5a4 4 0 0 1-4-4z" fill="currentColor" />
+      </g>
+    </>,
+  ),
+  vaccine: small(
+    <>
+      <path d="M15 4l5 5M17.5 6.5l-9 9-3.5.5.5-3.5 9-9M11 9l4 4M4.5 19.5L7 17" />
+    </>,
+  ),
+  vet: small(<path d="M12 5v14M5 12h14" />),
+};
 
 /* ---------- Bottom sheet ---------- */
 
@@ -195,4 +232,18 @@ export const Icons = {
   prev: icon(<path d="M14.5 6L8.5 12l6 6" />),
   next: icon(<path d="M9.5 6l6 6-6 6" />),
   close: icon(<path d="M6 6l12 12M18 6L6 18" />),
+  calendar: icon(
+    <>
+      <rect x="3.5" y="5" width="17" height="15.5" rx="3" />
+      <path d="M3.5 10h17M8 3v4M16 3v4" />
+    </>,
+  ),
+  skip: icon(<path d="M5 12h11M12 7l5 5-5 5M19 6v12" />),
+  moved: icon(<path d="M4 12h14M13 6l6 6-6 6" />),
+  camera: icon(
+    <>
+      <path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H8l1.5-2h5L16 6h1.5A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z" />
+      <circle cx="12" cy="12.5" r="3.5" />
+    </>,
+  ),
 };

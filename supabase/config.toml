@@ -1,0 +1,5 @@
+# Only used if you deploy with the Supabase CLI. The dashboard ignores this
+# file: there, turn off "Verify JWT" on the send-reminders function instead.
+# The function checks its own password from the app_secrets table.
+[functions.send-reminders]
+verify_jwt = false

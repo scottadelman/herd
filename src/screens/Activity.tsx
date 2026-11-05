@@ -1,10 +1,12 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { formatClock, formatDayLabel, todayISO } from '../lib/dates';
-import { firstName, memberById } from '../lib/people';
+import { addDays, formatClock, formatDayLabel, todayISO, dayPhrase } from '../lib/dates';
+import { memberById } from '../lib/people';
 import { QUICK_LOGS } from '../lib/pets';
 import type { TaskLog } from '../lib/types';
-import { HISTORY_DAYS, useApp } from '../state';
+import { HISTORY_DAYS, useApp, whoDid } from '../state';
 import { Chips, Field, Sheet, Stamp } from '../ui';
+
+const SITTER_GREY = '#7B8794';
 
 export function ActivityScreen() {
   const { snapshot, me } = useApp();
@@ -14,7 +16,8 @@ export function ActivityScreen() {
     const sorted = [...snapshot.logs].sort((a, b) => b.done_at.localeCompare(a.done_at));
     const map = new Map<string, TaskLog[]>();
     for (const l of sorted) {
-      const day = l.occurrence_date;
+      // Entries go under the day they happened.
+      const day = l.done_at ? localDay(l.done_at) : l.occurrence_date;
       if (!map.has(day)) map.set(day, []);
       map.get(day)!.push(l);
     }
@@ -33,6 +36,9 @@ export function ActivityScreen() {
           </button>
         )}
       </header>
+
+      <ThisWeek />
+
       {days.length === 0 ? (
         <div className="empty">
           <p>Everything your household checks off shows up here, newest first.</p>
@@ -44,17 +50,27 @@ export function ActivityScreen() {
             <ul className="list">
               {logs.map((l) => {
                 const who = memberById(snapshot.members, l.done_by);
-                const name = l.done_by === me.user_id ? 'You' : firstName(who?.display_name ?? 'Someone');
+                const name = whoDid(l, snapshot.members, me.user_id, true);
+                const verb =
+                  l.status === 'skipped'
+                    ? 'skipped this'
+                    : l.status === 'snoozed'
+                      ? `moved it to ${dayPhrase(l.snoozed_to!)}`
+                      : l.slot === 'adhoc'
+                        ? 'logged this'
+                        : '';
                 return (
-                  <li key={l.id} className="row">
-                    <Stamp name={who?.display_name ?? '?'} color={who?.color ?? '#7B8794'} size="sm" />
+                  <li key={l.id} className={`row${l.status !== 'done' ? ' row-done' : ''}`}>
+                    <Stamp name={who?.display_name ?? l.sitter_name ?? '?'} color={who?.color ?? SITTER_GREY} size="sm" />
                     <div className="row-text">
                       <span className="row-title">
                         {l.title} for {petName(l.pet_id)}
                       </span>
                       <span className="row-meta">
-                        {name}
-                        {l.slot === 'adhoc' ? ' logged this' : ''} at {formatClock(l.done_at)}
+                        <span className="row-meta-text">
+                          {name}
+                          {verb ? ` ${verb}` : ''} at {formatClock(l.done_at)}
+                        </span>
                       </span>
                       {l.note && <span className="note">“{l.note}”</span>}
                     </div>
@@ -71,8 +87,64 @@ export function ActivityScreen() {
   );
 }
 
+function localDay(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Who checked off how much in the last 7 days. One bar per person, labeled. */
+function ThisWeek() {
+  const { snapshot, me } = useApp();
+  const since = addDays(todayISO(), -6);
+  const rows = useMemo(() => {
+    const counts = new Map<string, { name: string; color: string; n: number; you: boolean }>();
+    for (const m of snapshot.members) {
+      counts.set(m.user_id, { name: m.display_name, color: m.color, n: 0, you: m.user_id === me.user_id });
+    }
+    for (const l of snapshot.logs) {
+      if (l.status !== 'done' || localDay(l.done_at) < since) continue;
+      const key = l.done_by ?? `sitter:${l.sitter_name ?? 'Sitter'}`;
+      if (!counts.has(key)) counts.set(key, { name: `${l.sitter_name ?? 'Sitter'} (sitter)`, color: SITTER_GREY, n: 0, you: false });
+      counts.get(key)!.n++;
+    }
+    return [...counts.values()].sort((a, b) => b.n - a.n);
+  }, [snapshot.logs, snapshot.members, me.user_id, since]);
+
+  const total = rows.reduce((s, r) => s + r.n, 0);
+  const max = Math.max(1, ...rows.map((r) => r.n));
+  if (!total) return null;
+
+  return (
+    <section className="group">
+      <h2 className="group-label">Last 7 days</h2>
+      <div className="panel">
+        <ul className="bars" aria-label={`${total} check-offs in the last 7 days`}>
+          {rows.map((r) => (
+            <li key={r.name} className="bar-row">
+              <span className="bar-name">
+                <Stamp name={r.name} color={r.color} size="sm" />
+                <span>{r.you ? 'You' : r.name}</span>
+              </span>
+              <span className="bar-track" aria-hidden="true">
+                <span className="bar-fill" style={{ width: `${(r.n / max) * 100}%`, background: r.color }} />
+              </span>
+              <span className="bar-val">
+                {r.n}
+                <span className="sr-only"> check-offs, {Math.round((r.n / total) * 100)} percent</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="muted small bars-foot">
+          {total} check-offs. {rows[0].n > 0 && rows.length > 1 && rows[0].n !== rows[1].n ? `${rows[0].you ? 'You' : rows[0].name.split(' ')[0]} did the most.` : 'Evenly split.'}
+        </p>
+      </div>
+    </section>
+  );
+}
+
 function LogSheet({ onClose }: { onClose: () => void }) {
-  const { snapshot, complete } = useApp();
+  const { snapshot, logAdhoc } = useApp();
   const [petId, setPetId] = useState(snapshot.pets[0]?.id ?? '');
   const [what, setWhat] = useState('');
   const [note, setNote] = useState('');
@@ -81,7 +153,7 @@ function LogSheet({ onClose }: { onClose: () => void }) {
     e.preventDefault();
     if (!petId || !what.trim()) return;
     onClose();
-    await complete({ petId, routineId: null, date: todayISO(), slot: 'adhoc', title: what.trim(), note: note.trim() || null });
+    await logAdhoc(petId, what.trim(), note.trim() || null);
   }
 
   return (
@@ -115,10 +187,10 @@ function LogSheet({ onClose }: { onClose: () => void }) {
               </button>
             ))}
           </div>
-          <input value={what} onChange={(e) => setWhat(e.target.value)} maxLength={60} placeholder="Or type your own" aria-label="What happened" />
+          <input id="log-what" value={what} onChange={(e) => setWhat(e.target.value)} maxLength={60} placeholder="Or type your own" aria-label="What happened" />
         </div>
         <Field label="Note">
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} placeholder="Optional" />
+          <textarea id="log-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} placeholder="Optional" />
         </Field>
       </form>
     </Sheet>

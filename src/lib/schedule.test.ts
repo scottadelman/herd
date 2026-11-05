@@ -9,6 +9,8 @@ const base: Routine = {
   pet_id: 'p1',
   title: 'Breakfast',
   kind: 'daily',
+  category: 'care',
+  dose: null,
   times: ['07:00'],
   weekdays: [],
   interval_days: null,

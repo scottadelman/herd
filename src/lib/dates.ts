@@ -70,3 +70,9 @@ export function formatShortDate(iso: string): string {
   const d = parseISODate(iso);
   return `${MONTH_SHORT[d.getMonth()]} ${d.getDate()}`;
 }
+
+/** A day label for use inside a sentence: "today", "tomorrow", or "Wed, Nov 11". */
+export function dayPhrase(iso: string, today: string = todayISO()): string {
+  const label = formatDayLabel(iso, today);
+  return Math.abs(daysBetween(today, iso)) <= 1 ? label.toLowerCase() : label;
+}
