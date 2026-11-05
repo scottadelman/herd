@@ -3,6 +3,6 @@
 // Find them in Supabase under Project Settings > API (or "API Keys").
 // Until they're filled in, the app only offers the demo household.
 window.HERD_CONFIG = {
-  supabaseUrl: 'https://PASTE-YOUR-PROJECT-ID.supabase.co',
-  supabaseAnonKey: 'PASTE-YOUR-PUBLISHABLE-OR-ANON-KEY',
+  supabaseUrl: 'https://wruemcfxvqjpfusryykc.supabase.co',
+  supabaseAnonKey: 'sb_publishable_8FMYqDGWofcQuhvFx7LG4g_4BPcl9n4',
 };
