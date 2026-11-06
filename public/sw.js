@@ -1,7 +1,7 @@
 // Keeps the app shell available offline so it opens instantly from the home
 // screen, and shows reminder notifications. Data always comes live from
 // Supabase and is never cached here.
-const CACHE = 'herd-shell-v2';
+const CACHE = 'herd-shell-v3';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './index.html', './manifest.webmanifest'])));

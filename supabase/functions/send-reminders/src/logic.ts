@@ -14,6 +14,8 @@ export interface RMember {
   user_id: string;
   notify_late: boolean;
   notify_daily: string | null;
+  /** Missing on databases before update 003; treated as on. */
+  notify_supplies?: boolean;
 }
 export interface RPet {
   id: string;
@@ -42,12 +44,23 @@ export interface RLog {
   status: 'done' | 'skipped' | 'snoozed';
   snoozed_to: string | null;
 }
+export interface RSupply {
+  id: string;
+  household_id: string;
+  name: string;
+  pet_ids: string[];
+  opened_on: string;
+  lasts_days: number;
+  lead_days: number;
+  ordered_on: string | null;
+}
 export interface ReminderInput {
   households: RHousehold[];
   members: RMember[];
   pets: RPet[];
   routines: RRoutine[];
   logs: RLog[];
+  supplies?: RSupply[];
   alreadySent: Set<string>;
 }
 export interface Reminder {
@@ -64,6 +77,8 @@ export const LATE_AFTER_MIN = 30;
 const LATE_UNTIL_MIN = 180;
 /** How long after the chosen time the morning summary can still go out. */
 const DAILY_WINDOW_MIN = 15;
+/** Reorder reminders go out at 9:00 AM local time. */
+export const SUPPLY_AT_MIN = 9 * 60;
 
 const ANY = 'any';
 
@@ -160,6 +175,18 @@ export function openItems(routines: RRoutine[], logs: RLog[], date: string): Ope
   return out;
 }
 
+/** When a supply runs out, and the day to order more by. */
+export function supplyDates(s: RSupply): { runOut: string; orderBy: string } {
+  const runOut = addDays(s.opened_on, s.lasts_days);
+  return { runOut, orderBy: addDays(runOut, -s.lead_days) };
+}
+
+/** Past the order-by date and nobody has ordered more yet. */
+export function needsOrder(s: RSupply, date: string): boolean {
+  if (s.ordered_on && s.ordered_on >= s.opened_on) return false;
+  return date >= supplyDates(s).orderBy;
+}
+
 function listWords(items: string[]): string {
   if (items.length <= 1) return items.join('');
   if (items.length === 2) return `${items[0]} and ${items[1]}`;
@@ -202,6 +229,35 @@ export function computeReminders(input: ReminderInput, now: Date): Reminder[] {
       }
     }
 
+    // Time to order more food or supplies: on the order-by day, and again on
+    // the last day if nobody has ordered.
+    const supplies = (input.supplies ?? []).filter((s) => s.household_id === h.id);
+    const toOrder = supplies.filter((s) => needsOrder(s, date));
+    const supplyWindow = minutes - SUPPLY_AT_MIN;
+    if (supplyWindow >= 0 && supplyWindow < DAILY_WINDOW_MIN) {
+      for (const s of toOrder) {
+        const { runOut, orderBy } = supplyDates(s);
+        const left = daysBetween(date, runOut);
+        const lastDay = left === 1;
+        if (date !== orderBy && !lastDay) continue;
+        const who = s.pet_ids.length ? listWords(s.pet_ids.map((id) => petName.get(id) ?? '').filter(Boolean)) : '';
+        for (const m of members) {
+          if (m.notify_supplies === false) continue;
+          const key = `supply|${s.id}|${s.opened_on}|${date}|${m.user_id}`;
+          if (input.alreadySent.has(key)) continue;
+          out.push({
+            userId: m.user_id,
+            key,
+            title: lastDay ? `${s.name} runs out tomorrow` : `Time to order more ${s.name}`,
+            body: `${left <= 0 ? 'It may already be out' : left === 1 ? 'About 1 day left' : `About ${left} days left`}${
+              who ? ` for ${who}` : ''
+            }. Tap “I ordered it” in Herd so nobody orders twice.`,
+            tag: `supply-${s.id}`,
+          });
+        }
+      }
+    }
+
     // Morning summary at each person's chosen time.
     const tomorrowHealth = openItems(routines, input.logs, addDays(date, 1)).filter((i) => HEALTH.has(i.routine.category));
     for (const m of members) {
@@ -210,7 +266,7 @@ export function computeReminders(input: ReminderInput, now: Date): Reminder[] {
       if (since < 0 || since >= DAILY_WINDOW_MIN) continue;
       const key = `daily|${h.id}|${m.user_id}|${date}`;
       if (input.alreadySent.has(key)) continue;
-      if (!open.length && !tomorrowHealth.length) continue;
+      if (!open.length && !tomorrowHealth.length && !toOrder.length) continue;
       const pets = [...new Set(open.map((i) => petName.get(i.routine.pet_id) ?? ''))].filter(Boolean);
       const health = open.filter((i) => HEALTH.has(i.routine.category) || i.routine.kind === 'once');
       const parts: string[] = [];
@@ -222,6 +278,7 @@ export function computeReminders(input: ReminderInput, now: Date): Reminder[] {
         const t = tomorrowHealth.map((i) => (i.slot === ANY ? i.routine.title : `${i.routine.title} at ${formatTime(i.slot)}`));
         parts.push(`Tomorrow: ${listWords([...new Set(t)])}.`);
       }
+      if (toOrder.length) parts.push(`Order soon: ${listWords(toOrder.map((s) => s.name))}.`);
       out.push({ userId: m.user_id, key, title: `Today at ${h.name}`, body: parts.join(' '), tag: `daily-${h.id}` });
     }
   }

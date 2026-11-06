@@ -4,7 +4,9 @@ import { buildDay, isLate, isResolved, type DayItem } from '../lib/day';
 import { firstName } from '../lib/people';
 import { PERIODS, periodOf, ANY_TIME } from '../lib/schedule';
 import type { Backend, SitterSnapshot, TaskLog } from '../lib/types';
-import { CategoryMark, PetAvatar, Spinner, Stamp, useToast } from '../ui';
+import { PetDropdown } from '../parts/PetInfo';
+import { CategoryMark, Icons, PetAvatar, Spinner, Stamp, useToast } from '../ui';
+import { WalkMap } from './WalkMap';
 
 const SITTER_GREY = '#7B8794';
 const REFRESH_MS = 30_000;
@@ -21,6 +23,7 @@ export function SitterView({ backend, token, preview = false }: { backend: Backe
   const toast = useToast();
   const [snap, setSnap] = useState<SitterSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mapOpen, setMapOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -129,18 +132,32 @@ export function SitterView({ backend, token, preview = false }: { backend: Backe
 
       <section className="group">
         <h2 className="group-label">{snap.pets.length === 1 ? 'The pet' : 'The pets'}</h2>
-        <ul className="list">
+        <div className="list">
           {snap.pets.map((p) => (
-            <li key={p.id} className="row sitter-pet">
-              <PetAvatar emoji={p.emoji} photo={p.photo} size="lg" />
-              <div className="row-text">
-                <span className="row-title row-title-lg">{p.name}</span>
-                {p.notes && <span className="sitter-notes">{p.notes}</span>}
-              </div>
-            </li>
+            <PetDropdown key={p.id} pet={p} routines={snap.routines} defaultOpen={snap.pets.length === 1} />
           ))}
-        </ul>
+        </div>
+        <p className="footnote">Tap the arrow for feeding, allergies, likes and dislikes, and the vet.</p>
       </section>
+
+      {(snap.places ?? []).length > 0 && (
+        <section className="group">
+          <ul className="list">
+            <li>
+              <button className="row row-button" onClick={() => setMapOpen(true)}>
+                <span className="add-mark">{Icons.map}</span>
+                <span className="row-text">
+                  <span className="row-title">Walk map</span>
+                  <span className="row-meta">Usual routes, parks and poop bag spots</span>
+                </span>
+                <span className="chev" aria-hidden="true">
+                  {Icons.next}
+                </span>
+              </button>
+            </li>
+          </ul>
+        </section>
+      )}
 
       {items.length === 0 ? (
         <div className="empty">
@@ -199,6 +216,8 @@ export function SitterView({ backend, token, preview = false }: { backend: Backe
           </section>
         ))
       )}
+
+      {mapOpen && <WalkMap title="Walk map" places={snap.places ?? []} onClose={() => setMapOpen(false)} />}
 
       <footer className="sitter-foot">
         <p className="muted small">

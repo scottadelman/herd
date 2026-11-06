@@ -24,6 +24,12 @@
   --cat-vaccine: #00907a;
   --cat-vet: #b8580f;
   --cat-scheduled: #2f6ccf;
+  /* Supplies meter and walk map */
+  --warn: #b8580f;
+  --map-route: #2f6ccf;
+  --map-park: #2e7d4f;
+  --map-bags: #b8580f;
+  --tile-filter: none;
   --radius-lg: 20px;
   --radius-md: 14px;
   --radius-sm: 10px;
@@ -57,6 +63,11 @@
     --cat-vaccine: #1fa293;
     --cat-vet: #d0782f;
     --cat-scheduled: #5a86d9;
+    --warn: #d0782f;
+    --map-route: #7aa2ea;
+    --map-park: #4caf7a;
+    --map-bags: #d98a4a;
+    --tile-filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6);
     color-scheme: dark;
   }
 }
@@ -82,6 +93,11 @@
   --cat-vaccine: #1fa293;
   --cat-vet: #d0782f;
   --cat-scheduled: #5a86d9;
+  --warn: #d0782f;
+  --map-route: #7aa2ea;
+  --map-park: #4caf7a;
+  --map-bags: #d98a4a;
+  --tile-filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6);
   color-scheme: dark;
 }
 
@@ -1760,4 +1776,800 @@ button.row-main:active {
 .tab {
   max-width: 112px;
   font-size: 11.5px;
+}
+
+/* =====================================================================
+   v0.3: pet profiles, supplies, walk map, add anywhere
+   ===================================================================== */
+
+/* Today in the middle of the tab bar, as home */
+.tab-home svg {
+  width: 46px;
+  height: 30px;
+  padding: 3px 11px;
+  border-radius: 99px;
+  background: var(--surface-2);
+}
+
+.tab-home.tab-on svg {
+  background: var(--ball);
+  color: var(--on-ball);
+}
+
+.add-btn {
+  margin-left: auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ball);
+  color: var(--on-ball);
+}
+
+.add-btn:active {
+  background: var(--ball-press);
+}
+
+.add-btn svg {
+  stroke-width: 2.4;
+}
+
+.add-mark {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 20px;
+}
+
+.add-list .cat-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  flex: none;
+}
+
+.add-list .cat-mark svg {
+  width: 20px;
+  height: 20px;
+}
+
+.add-list .row-meta {
+  font-size: 14px;
+}
+
+.quick-actions,
+.shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.shortcuts {
+  margin-top: 8px;
+}
+
+.btn-small svg {
+  flex: none;
+}
+
+a.btn {
+  text-decoration: none;
+  color: inherit;
+}
+
+.behind-note {
+  margin-bottom: 16px;
+}
+
+.footnote + .btn,
+.history-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+/* Tags (allergies, likes) */
+.tags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.tag-alert {
+  background: var(--alert-soft);
+  border-color: color-mix(in srgb, var(--alert) 45%, transparent);
+  color: var(--alert);
+  font-weight: 600;
+}
+
+.tag button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: -6px;
+  border-radius: 50%;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.tag-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Pet facts: feeding, allergies, likes, vet */
+.pet-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pet-facts {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.pet-facts > div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.pet-facts dt {
+  color: var(--ink-2);
+  font-size: 15px;
+  padding-top: 1px;
+}
+
+.pet-facts dd {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 16px;
+  min-width: 0;
+}
+
+.pet-fact-strong {
+  font-weight: 500;
+}
+
+.pet-fact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.pet-fact-actions svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pet-fact-missing dd {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pet-fact-missing .btn-text {
+  min-height: 32px;
+  align-self: center;
+}
+
+.faint {
+  color: var(--ink-3);
+}
+
+.pet-info-notes {
+  font-size: 15px;
+  color: var(--ink-2);
+  border-left: 3px solid var(--line);
+  padding-left: 10px;
+}
+
+.facts-gap {
+  margin-top: 10px;
+}
+
+.mono-num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* Pet dropdowns (Pets list, sitter page) */
+.list > .pet-drop + .pet-drop {
+  border-top: 1px solid var(--line);
+}
+
+.pet-drop-head {
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+}
+
+.pet-drop-head .row-main {
+  min-height: 76px;
+}
+
+.pet-drop-toggle {
+  flex: none;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  transition: transform 0.2s ease;
+}
+
+.pet-drop-open .pet-drop-toggle {
+  transform: rotate(180deg);
+}
+
+.pet-drop-body {
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pet-drop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The chosen pet on Today */
+.pet-strip .chip-pet {
+  padding-right: 14px;
+}
+
+.pet-card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.pet-card-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.pet-card-head:active {
+  background: var(--surface-2);
+}
+
+.pet-card-chev {
+  flex: none;
+  color: var(--ink-2);
+  display: grid;
+  transition: transform 0.2s ease;
+}
+
+.pet-card-open .pet-card-chev {
+  transform: rotate(180deg);
+}
+
+.pet-card-body {
+  padding: 2px 16px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pet-drop-toggle,
+  .pet-card-chev {
+    transition: none;
+  }
+}
+
+/* Supplies */
+.supply-row {
+  align-items: flex-start;
+}
+
+.supply-emoji {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-size: 20px;
+}
+
+.supply-row .chev {
+  align-self: center;
+}
+
+.meter {
+  display: block;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--line);
+  overflow: hidden;
+  margin: 4px 0 2px;
+  max-width: 220px;
+}
+
+.meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--ball);
+}
+
+.meter-warn > span {
+  background: var(--warn);
+}
+
+.meter-alert > span {
+  background: var(--alert);
+}
+
+.meter-ordered > span {
+  background: var(--ink-3);
+}
+
+.supply-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.supply-hero .meter {
+  height: 10px;
+  max-width: none;
+}
+
+.list-alert {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--alert) 55%, transparent);
+}
+
+.inline-number {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-2);
+}
+
+.inline-number input {
+  width: 96px !important;
+}
+
+/* Pet form: any emoji, foldable profile parts */
+.emoji-any {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.emoji-any input {
+  font-size: 22px;
+}
+
+.profile-sections {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.profile-section + .profile-section {
+  border-top: 1px solid var(--line);
+}
+
+.profile-section summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  scroll-margin-top: 8px;
+}
+
+.profile-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.profile-section summary > span:first-child {
+  flex: 1;
+}
+
+.profile-section summary .muted {
+  font-weight: 400;
+}
+
+.profile-section-chev {
+  display: grid;
+  color: var(--ink-3);
+  transition: transform 0.2s ease;
+}
+
+.profile-section[open] .profile-section-chev {
+  transform: rotate(180deg);
+}
+
+.profile-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 14px 18px;
+}
+
+.profile-section-body input:not([type='checkbox']),
+.profile-section-body textarea {
+  background: var(--ground);
+}
+
+/* Calendar: past days */
+.cal-missed .cal-num {
+  box-shadow: inset 0 -2.5px 0 var(--alert);
+  border-radius: 4px;
+}
+
+.cal-today.cal-missed .cal-num {
+  box-shadow: none;
+}
+
+.cal-missed-key {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--alert);
+}
+
+.cal-loading .cal-grid {
+  opacity: 0.55;
+}
+
+.agenda-care .row-meta {
+  font-size: 15px;
+}
+
+.chev-down {
+  transition: transform 0.2s ease;
+}
+
+.chev-up {
+  transform: rotate(180deg);
+}
+
+.agenda-care {
+  min-height: 52px;
+}
+
+/* ---------- Walk map ---------- */
+
+.map-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 32;
+  background: var(--ground);
+  display: flex;
+  flex-direction: column;
+}
+
+.map-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: calc(env(safe-area-inset-top, 0px) + 6px) 6px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.map-top h1 {
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-top .btn-text {
+  align-self: center;
+  font-weight: 600;
+}
+
+.map-wrap {
+  position: relative;
+  flex: 0 0 52dvh;
+  min-height: 240px;
+}
+
+.map-canvas,
+.map-canvas.leaflet-container {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-2);
+  font-family: var(--font);
+}
+
+.map-canvas.map-drawing,
+.map-canvas.map-drawing .leaflet-interactive {
+  cursor: crosshair;
+}
+
+.map-canvas .leaflet-tile-pane {
+  filter: var(--tile-filter);
+}
+
+.map-canvas .leaflet-control-attribution {
+  font-size: 10px;
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  color: var(--ink-2);
+}
+
+.map-canvas .leaflet-control-attribution a {
+  color: var(--focus);
+}
+
+.map-canvas .leaflet-bar a {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line);
+  width: 36px;
+  height: 36px;
+  line-height: 36px;
+}
+
+.map-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--ink-2);
+  z-index: 500;
+}
+
+.map-note,
+.map-hint {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  z-index: 600;
+  margin: 0 auto;
+  max-width: 420px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  text-align: center;
+  box-shadow: 0 2px 10px rgba(17, 26, 35, 0.18);
+}
+
+.map-note {
+  top: 12px;
+  right: 60px;
+}
+
+.map-hint {
+  top: 12px;
+  right: 60px;
+  font-weight: 500;
+}
+
+.map-tools {
+  position: absolute;
+  left: 10px;
+  bottom: 28px;
+  z-index: 600;
+}
+
+.map-tool {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--focus);
+  box-shadow: 0 2px 10px rgba(17, 26, 35, 0.22);
+}
+
+.map-panel {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: 14px calc(env(safe-area-inset-bottom, 0px) + 20px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.map-panel > .group {
+  margin-bottom: 4px;
+}
+
+.map-actions,
+.map-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.map-card {
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.map-card .row-title {
+  margin-bottom: 2px;
+}
+
+.map-list-mark {
+  flex: none;
+  display: grid;
+}
+
+/* Pins */
+.map-pin-wrap {
+  background: none;
+  border: 0;
+}
+
+.map-pin {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2.5px solid currentColor;
+  box-shadow: 0 1px 6px rgba(17, 26, 35, 0.3);
+}
+
+.map-pin-park,
+.map-pin-dog_park {
+  color: var(--map-park);
+}
+
+.map-pin-bag_spot,
+.map-pin-bags,
+.map-pin-bin {
+  color: var(--map-bags);
+}
+
+.map-pin-other {
+  color: var(--ink-2);
+}
+
+.map-pin-route {
+  color: var(--map-route);
+}
+
+.map-pin-public {
+  width: 28px;
+  height: 28px;
+  border-width: 2px;
+  border-style: dashed;
+  box-shadow: none;
+  opacity: 0.9;
+}
+
+.map-pin-public svg {
+  width: 15px;
+  height: 15px;
+}
+
+.map-pin-on {
+  transform: scale(1.18);
+  background: currentColor;
+}
+
+.map-pin-on svg {
+  stroke: var(--surface);
+}
+
+.map-list-mark .map-pin {
+  box-shadow: none;
+}
+
+.map-start {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 4px solid var(--map-route);
+}
+
+.map-start-on {
+  background: var(--map-route);
+}
+
+.map-canvas path.map-route {
+  stroke: var(--map-route);
+  stroke-opacity: 0.85;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.map-canvas path.map-route-on {
+  stroke-opacity: 1;
+}
+
+.map-canvas path.map-route-draft {
+  stroke-dasharray: 2 9;
+  stroke-opacity: 1;
+}
+
+.map-canvas path.map-vertex {
+  stroke: var(--map-route);
+  fill: var(--surface);
+  fill-opacity: 1;
+}
+
+.map-canvas path.map-me {
+  stroke: var(--surface);
+  fill: var(--focus);
+  fill-opacity: 1;
+}
+
+@media (min-height: 900px) {
+  .map-wrap {
+    flex-basis: 58dvh;
+  }
+}
+
+.row-meta-text .late {
+  margin-left: 0;
+}
+
+a.btn-text {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
 }

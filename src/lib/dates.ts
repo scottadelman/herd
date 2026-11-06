@@ -76,3 +76,11 @@ export function dayPhrase(iso: string, today: string = todayISO()): string {
   const label = formatDayLabel(iso, today);
   return Math.abs(daysBetween(today, iso)) <= 1 ? label.toLowerCase() : label;
 }
+
+const MONTH_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** "November 5, 2026" */
+export function formatLongDate(iso: string): string {
+  const d = parseISODate(iso);
+  return `${MONTH_LONG[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}

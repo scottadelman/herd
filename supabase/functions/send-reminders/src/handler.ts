@@ -6,7 +6,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
-import { addDays, computeReminders, localNow, type RLog } from './logic.ts';
+import { addDays, computeReminders, localNow, type RLog, type RMember, type RSupply } from './logic.ts';
 
 type Sub = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
 
@@ -46,16 +46,20 @@ Deno.serve(async (req) => {
   if (!subscriptions.length) return json({ ok: true, sent: 0, note: 'No phones have reminders turned on yet.' });
   const userIds = [...new Set(subscriptions.map((s) => s.user_id))];
 
-  const { data: memberRows } = await db
-    .from('household_members')
-    .select('household_id, user_id, notify_late, notify_daily')
-    .in('user_id', userIds);
-  const members = memberRows ?? [];
+  // select('*') so this keeps working on a database that's missing an update.
+  const { data: memberRows } = await db.from('household_members').select('*').in('user_id', userIds);
+  const members: RMember[] = (memberRows ?? []).map((m) => ({
+    household_id: m.household_id,
+    user_id: m.user_id,
+    notify_late: m.notify_late ?? true,
+    notify_daily: m.notify_daily ?? null,
+    notify_supplies: m.notify_supplies ?? true,
+  }));
   const householdIds = [...new Set(members.map((m) => m.household_id))];
   if (!householdIds.length) return json({ ok: true, sent: 0 });
 
   const since = addDays(localNow(new Date(), 'UTC').date, -2);
-  const [h, p, r, l, sent] = await Promise.all([
+  const [h, p, r, l, sent, sup] = await Promise.all([
     db.from('households').select('id, name, timezone').in('id', householdIds),
     db.from('pets').select('id, household_id, name').in('household_id', householdIds),
     db.from('routines').select('*').in('household_id', householdIds).eq('active', true),
@@ -66,6 +70,10 @@ Deno.serve(async (req) => {
       .not('routine_id', 'is', null)
       .or(`occurrence_date.gte.${since},snoozed_to.gte.${since}`),
     db.from('notifications_sent').select('key').gte('sent_at', new Date(Date.now() - 2 * 86_400_000).toISOString()),
+    db
+      .from('supplies')
+      .select('id, household_id, name, pet_ids, opened_on, lasts_days, lead_days, ordered_on')
+      .in('household_id', householdIds),
   ]);
   for (const res of [h, p, r, l, sent]) if (res.error) return json({ error: res.error.message }, 500);
 
@@ -76,6 +84,8 @@ Deno.serve(async (req) => {
       pets: p.data ?? [],
       routines: r.data ?? [],
       logs: (l.data ?? []) as RLog[],
+      // No supplies table yet (update 003 not run) just means no reorder reminders.
+      supplies: sup.error ? [] : ((sup.data ?? []) as RSupply[]),
       alreadySent: new Set((sent.data ?? []).map((x) => x.key)),
     },
     new Date(),

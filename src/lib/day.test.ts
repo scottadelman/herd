@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildDay, snoozeTarget } from './day';
 import { describeSchedule, occurrencesForDate } from './schedule';
-import type { Pet, Routine, TaskLog } from './types';
+import { EMPTY_PROFILE, type Pet, type Routine, type TaskLog } from './types';
 
 const pet: Pet = {
+  ...EMPTY_PROFILE,
   id: 'p1',
   household_id: 'h',
   name: 'Biscuit',

@@ -182,6 +182,87 @@ export function Chips<T extends string>({
   );
 }
 
+/** Type a word and press return (or a comma) to add it as a tag. */
+export function TagInput({
+  id,
+  values,
+  onChange,
+  placeholder,
+  tone,
+  label,
+}: {
+  id: string;
+  values: string[];
+  onChange: (v: string[]) => void;
+  placeholder?: string;
+  tone?: 'alert';
+  label: string;
+}) {
+  const [draft, setDraft] = useState('');
+  const add = (raw: string) => {
+    const parts = raw
+      .split(/[,\n;]/)
+      .map((x) => x.trim().slice(0, 60))
+      .filter(Boolean);
+    if (!parts.length) return;
+    const next = [...values];
+    for (const p of parts) if (!next.some((x) => x.toLowerCase() === p.toLowerCase())) next.push(p);
+    onChange(next.slice(0, 20));
+    setDraft('');
+  };
+  return (
+    <div className="tag-input">
+      {values.length > 0 && (
+        <ul className="tags" aria-label={label}>
+          {values.map((v) => (
+            <li key={v} className={`tag${tone ? ` tag-${tone}` : ''}`}>
+              {v}
+              <button type="button" onClick={() => onChange(values.filter((x) => x !== v))} aria-label={`Remove ${v}`}>
+                {Icons.closeSmall}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <input
+        id={id}
+        value={draft}
+        aria-label={label}
+        placeholder={placeholder}
+        maxLength={80}
+        enterKeyHint="done"
+        onChange={(e) => {
+          const v = e.target.value;
+          if (/[,;]/.test(v)) add(v);
+          else setDraft(v);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            add(draft);
+          } else if (e.key === 'Backspace' && !draft && values.length) {
+            onChange(values.slice(0, -1));
+          }
+        }}
+        onBlur={() => add(draft)}
+      />
+    </div>
+  );
+}
+
+/** A row of plain tags (allergies, likes) for reading. */
+export function Tags({ values, tone }: { values: string[]; tone?: 'alert' | 'quiet' }) {
+  return (
+    <ul className="tags">
+      {values.map((v) => (
+        <li key={v} className={`tag${tone ? ` tag-${tone}` : ''}`}>
+          {v}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function Spinner({ label = 'Loading' }: { label?: string }) {
   return (
     <div className="spinner-wrap" role="status">
@@ -245,5 +326,42 @@ export const Icons = {
       <path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H8l1.5-2h5L16 6h1.5A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z" />
       <circle cx="12" cy="12.5" r="3.5" />
     </>,
+  ),
+  people: icon(
+    <>
+      <circle cx="9" cy="8.5" r="3.2" />
+      <path d="M3.5 19.5c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5" />
+      <circle cx="16.8" cy="9.3" r="2.5" />
+      <path d="M15.6 14.6c2.4-.2 4.4 1.4 4.9 4.4" />
+    </>,
+  ),
+  map: icon(
+    <>
+      <path d="M9 4.5L3.5 6.5v13l5.5-2 6 2 5.5-2v-13l-5.5 2z" />
+      <path d="M9 4.5v13M15 6.5v13" />
+    </>,
+  ),
+  phone: icon(
+    <path d="M6.5 3.5h3l1.5 4-2 1.3a10.5 10.5 0 0 0 6.2 6.2l1.3-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z" />,
+  ),
+  file: icon(
+    <>
+      <path d="M13.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z" />
+      <path d="M13.5 3.5V9H19M9 13h6M9 16.5h4" />
+    </>,
+  ),
+  down: icon(<path d="M6 9.5l6 6 6-6" />),
+  locate: icon(
+    <>
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
+      <circle cx="12" cy="12" r="7.5" />
+    </>,
+  ),
+  undo: icon(<path d="M9 7L4.5 11.5 9 16M5 11.5h9.5a5 5 0 0 1 0 10H12" />),
+  closeSmall: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+      <path d="M7 7l10 10M17 7L7 17" />
+    </svg>
   ),
 };

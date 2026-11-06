@@ -1,19 +1,17 @@
-import { useMemo, useState, type FormEvent } from 'react';
-import { addDays, formatClock, formatDayLabel, todayISO, dayPhrase } from '../lib/dates';
+import { useMemo } from 'react';
+import { addDays, daysBetween, formatClock, formatDayLabel, formatShortDate, todayISO, dayPhrase } from '../lib/dates';
 import { memberById } from '../lib/people';
-import { QUICK_LOGS } from '../lib/pets';
 import type { TaskLog } from '../lib/types';
-import { HISTORY_DAYS, useApp, whoDid } from '../state';
-import { Chips, Field, Sheet, Stamp } from '../ui';
+import { useApp, whoDid } from '../state';
+import { Spinner, Stamp } from '../ui';
 
 const SITTER_GREY = '#7B8794';
 
 export function ActivityScreen() {
-  const { snapshot, me } = useApp();
-  const [logging, setLogging] = useState(false);
+  const { snapshot, logs, me, openAdd, historyFrom, historyLoading, loadHistory } = useApp();
 
   const days = useMemo(() => {
-    const sorted = [...snapshot.logs].sort((a, b) => b.done_at.localeCompare(a.done_at));
+    const sorted = [...logs].sort((a, b) => b.done_at.localeCompare(a.done_at));
     const map = new Map<string, TaskLog[]>();
     for (const l of sorted) {
       // Entries go under the day they happened.
@@ -22,7 +20,7 @@ export function ActivityScreen() {
       map.get(day)!.push(l);
     }
     return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
-  }, [snapshot.logs]);
+  }, [logs]);
 
   const petName = (id: string) => snapshot.pets.find((p) => p.id === id)?.name ?? 'a pet';
 
@@ -31,7 +29,7 @@ export function ActivityScreen() {
       <header className="screen-head screen-head-row">
         <h1 className="screen-title">Activity</h1>
         {snapshot.pets.length > 0 && (
-          <button className="btn btn-primary btn-small" onClick={() => setLogging(true)}>
+          <button className="btn btn-primary btn-small" onClick={() => openAdd({ kind: 'log' })}>
             Log something
           </button>
         )}
@@ -81,8 +79,18 @@ export function ActivityScreen() {
           </section>
         ))
       )}
-      <p className="footnote">Showing the last {HISTORY_DAYS} days.</p>
-      {logging && <LogSheet onClose={() => setLogging(false)} />}
+      <div className="history-more">
+        <p className="footnote">
+          Showing everything since {formatShortDate(historyFrom)} ({daysBetween(historyFrom, todayISO())} days). Everyone in the household sees the same history.
+        </p>
+        {historyLoading ? (
+          <Spinner label="Loading earlier history" />
+        ) : (
+          <button className="btn btn-quiet btn-small" onClick={() => loadHistory(addDays(historyFrom, -30))}>
+            Show the month before
+          </button>
+        )}
+      </div>
     </>
   );
 }
@@ -140,59 +148,5 @@ function ThisWeek() {
         </p>
       </div>
     </section>
-  );
-}
-
-function LogSheet({ onClose }: { onClose: () => void }) {
-  const { snapshot, logAdhoc } = useApp();
-  const [petId, setPetId] = useState(snapshot.pets[0]?.id ?? '');
-  const [what, setWhat] = useState('');
-  const [note, setNote] = useState('');
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    if (!petId || !what.trim()) return;
-    onClose();
-    await logAdhoc(petId, what.trim(), note.trim() || null);
-  }
-
-  return (
-    <Sheet
-      title="Log something"
-      onClose={onClose}
-      footer={
-        <button className="btn btn-primary btn-block" form="log-form" disabled={!what.trim() || !petId}>
-          Add to activity
-        </button>
-      }
-    >
-      <form id="log-form" className="stack" onSubmit={save}>
-        {snapshot.pets.length > 1 && (
-          <div className="field">
-            <span className="field-label">Which pet</span>
-            <Chips<string>
-              label="Which pet"
-              value={petId}
-              onChange={setPetId}
-              options={snapshot.pets.map((p) => ({ value: p.id, label: `${p.emoji} ${p.name}` }))}
-            />
-          </div>
-        )}
-        <div className="field">
-          <span className="field-label">What happened</span>
-          <div className="chips">
-            {QUICK_LOGS.map((q) => (
-              <button type="button" key={q} className={`chip${what === q ? ' chip-on' : ''}`} onClick={() => setWhat(q)}>
-                {q}
-              </button>
-            ))}
-          </div>
-          <input id="log-what" value={what} onChange={(e) => setWhat(e.target.value)} maxLength={60} placeholder="Or type your own" aria-label="What happened" />
-        </div>
-        <Field label="Note">
-          <textarea id="log-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={500} placeholder="Optional" />
-        </Field>
-      </form>
-    </Sheet>
   );
 }

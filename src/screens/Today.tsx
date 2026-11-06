@@ -1,24 +1,38 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { addDays, daysBetween, formatClock, formatDayLabel, formatTime, toISODate, todayISO, dayPhrase } from '../lib/dates';
 import { buildDay, countsTowardProgress, indexLogs, isLate, isResolved, snoozeTarget, type DayItem } from '../lib/day';
 import { firstName, memberById } from '../lib/people';
+import { mealRoutines, petSubtitle } from '../lib/profile';
 import { ANY_TIME, PERIODS, periodOf, type Period } from '../lib/schedule';
+import type { Pet } from '../lib/types';
+import { PetQuickInfo, petSummary } from '../parts/PetInfo';
+import { SupplyBanner } from '../parts/Supplies';
 import { useApp, whoDid } from '../state';
-import { CategoryMark, Icons, PetAvatar, Sheet, Stamp } from '../ui';
+import { CategoryMark, Icons, PetAvatar, Sheet, Spinner, Stamp, Tags } from '../ui';
 
 const MAX_AHEAD = 60;
 const SITTER_GREY = '#7B8794';
 
-export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
-  const { snapshot, date, setDate, checkOff, freshLogIds } = useApp();
+export function TodayScreen() {
+  const { snapshot, logs, date, setDate, checkOff, freshLogIds, historyFrom, historyLoading, loadHistory, openAdd, openMap, me, viewPet } = useApp();
   const today = todayISO();
   const [petFilter, setPetFilter] = useState<string>('all');
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const pets = snapshot.pets;
+  const onePet = pets.length === 1 ? pets[0] : null;
+  const focusPet = onePet ?? pets.find((p) => p.id === petFilter) ?? null;
 
-  const index = useMemo(() => indexLogs(snapshot.logs), [snapshot.logs]);
+  // Looking further back than what's loaded: fetch that history.
+  const needHistory = date < historyFrom;
+  useEffect(() => {
+    if (needHistory) loadHistory(addDays(date, -7));
+  }, [needHistory, date, loadHistory]);
+
+  const src = useMemo(() => ({ ...snapshot, logs }), [snapshot, logs]);
+  const index = useMemo(() => indexLogs(logs), [logs]);
   const items = useMemo(
-    () => buildDay(snapshot, date, { petId: petFilter === 'all' ? undefined : petFilter, index }),
-    [snapshot, date, petFilter, index],
+    () => buildDay(src, date, { petId: petFilter === 'all' ? undefined : petFilter, index }),
+    [src, date, petFilter, index],
   );
   const opened = items.find((i) => i.key === openKey) ?? null;
 
@@ -29,7 +43,6 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
   const grouped = PERIODS.map((p) => ({ ...p, items: items.filter((i) => periodOf(i.slot) === p.key) })).filter(
     (g) => g.items.length,
   );
-  const pets = snapshot.pets;
 
   return (
     <>
@@ -47,10 +60,16 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
           >
             {Icons.next}
           </button>
-          {date !== today && (
+          {date !== today ? (
             <button className="btn-text day-nav-today" onClick={() => setDate(today)}>
               Back to today
             </button>
+          ) : (
+            pets.length > 0 && (
+              <button className="add-btn" onClick={() => openAdd({ kind: 'menu' })} aria-label="Add a task, event, log or supply">
+                {Icons.plus}
+              </button>
+            )
           )}
         </div>
         {counted.length > 0 &&
@@ -68,29 +87,46 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
           ))}
       </header>
 
+      {snapshot.behind && me.role === 'owner' && date === today && (
+        <p className="form-notice behind-note">
+          Herd has a database update waiting (update 003) for food reminders and the walk map. The README’s “Updating an existing setup” has the steps.
+        </p>
+      )}
+
+      {date === today && <SupplyBanner />}
+
       {pets.length > 1 && (
-        <div className="filter-row" role="radiogroup" aria-label="Show tasks for">
-          {[{ id: 'all', name: 'All pets', emoji: '' }, ...pets].map((p) => (
+        <div className="filter-row pet-strip" role="radiogroup" aria-label="Show tasks for">
+          <button role="radio" aria-checked={petFilter === 'all'} className={`chip${petFilter === 'all' ? ' chip-on' : ''}`} onClick={() => setPetFilter('all')}>
+            All pets
+          </button>
+          {pets.map((p) => (
             <button
               key={p.id}
               role="radio"
               aria-checked={petFilter === p.id}
-              className={`chip${petFilter === p.id ? ' chip-on' : ''}`}
-              onClick={() => setPetFilter(p.id)}
+              className={`chip chip-pet${petFilter === p.id ? ' chip-on' : ''}`}
+              onClick={() => setPetFilter(petFilter === p.id ? 'all' : p.id)}
             >
-              {p.emoji && <span aria-hidden="true">{p.emoji} </span>}
+              <PetAvatar emoji={p.emoji} photo={p.photo} size="sm" />
               {p.name}
             </button>
           ))}
         </div>
       )}
 
+      {focusPet && <PetCard key={focusPet.id} pet={focusPet} onProfile={() => viewPet(focusPet.id)} />}
+
       {pets.length === 0 ? (
         <div className="empty">
           <p>Add your pets and their routines, and today’s list builds itself.</p>
-          <button className="btn btn-primary" onClick={onGoToPets}>
+          <button className="btn btn-primary" onClick={() => openAdd({ kind: 'pet' })}>
             Add your first pet
           </button>
+        </div>
+      ) : needHistory && historyLoading ? (
+        <div className="empty empty-inline">
+          <Spinner label="Loading that day" />
         </div>
       ) : items.length === 0 ? (
         <div className="empty">
@@ -98,8 +134,8 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
             Nothing scheduled {date === today ? 'today' : 'this day'}
             {petFilter !== 'all' ? ' for this pet' : ''}.
           </p>
-          <button className="btn btn-quiet" onClick={onGoToPets}>
-            Add a routine
+          <button className="btn btn-quiet" onClick={() => openAdd({ kind: date < today ? 'log' : 'menu', date, petId: focusPet?.id })}>
+            {date < today ? 'Log something for this day' : 'Add something'}
           </button>
         </div>
       ) : (
@@ -123,8 +159,56 @@ export function TodayScreen({ onGoToPets }: { onGoToPets: () => void }) {
         ))
       )}
 
+      {pets.length > 0 && (
+        <section className="group shortcuts" aria-label="Shortcuts">
+          <button className="btn btn-quiet btn-small" onClick={openMap}>
+            {Icons.map}
+            Walk map
+          </button>
+          <button className="btn btn-quiet btn-small" onClick={() => openAdd({ kind: 'log', date, petId: focusPet?.id })}>
+            {Icons.activity}
+            Log something
+          </button>
+          {date > today && (
+            <button className="btn btn-quiet btn-small" onClick={() => openAdd({ kind: 'event', date, petId: focusPet?.id })}>
+              {Icons.calendar}
+              Add to this day
+            </button>
+          )}
+        </section>
+      )}
+
       {opened && <TaskSheet item={opened} onClose={() => setOpenKey(null)} />}
     </>
+  );
+}
+
+/** The chosen pet on Today, with a dropdown for feeding, allergies and the vet. */
+function PetCard({ pet, onProfile }: { pet: Pet; onProfile: () => void }) {
+  const { snapshot } = useApp();
+  const [open, setOpen] = useState(false);
+  const id = `today-pet-${pet.id}`;
+  return (
+    <section className={`pet-card${open ? ' pet-card-open' : ''}`} aria-label={pet.name}>
+      <button className="pet-card-head" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
+        <PetAvatar emoji={pet.emoji} photo={pet.photo} />
+        <span className="row-text">
+          <span className="row-title">{pet.name}’s info</span>
+          <span className="row-meta">{open ? petSubtitle(pet, todayISO()) : petSummary(pet, snapshot.routines)}</span>
+        </span>
+        <span className="pet-card-chev" aria-hidden="true">
+          {Icons.down}
+        </span>
+      </button>
+      {open && (
+        <div className="pet-card-body" id={id}>
+          <PetQuickInfo pet={pet} routines={snapshot.routines} />
+          <button className="btn-text" onClick={onProfile}>
+            Full profile
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -258,6 +342,7 @@ function TaskSheet({ item, onClose }: { item: DayItem; onClose: () => void }) {
   const doer = log ? memberById(snapshot.members, log.done_by) : undefined;
   const assignee = memberById(snapshot.members, routine.assignee);
   const pending = !!log?.id.startsWith('temp-');
+  const isMeal = mealRoutines(pet, [routine]).length > 0;
 
   const when = slot === ANY_TIME ? 'Any time' : formatTime(slot);
   const details = (
@@ -279,6 +364,26 @@ function TaskSheet({ item, onClose }: { item: DayItem; onClose: () => void }) {
         <div>
           <dt>Whose job</dt>
           <dd>{assignee.user_id === me.user_id ? 'Yours' : assignee.display_name}</dd>
+        </div>
+      )}
+      {isMeal && (pet.food || pet.food_amount) && (
+        <div>
+          <dt>Feed</dt>
+          <dd>{[pet.food_amount, pet.food].filter(Boolean).join(', ')}</dd>
+        </div>
+      )}
+      {isMeal && pet.feeding_notes && (
+        <div>
+          <dt>How</dt>
+          <dd>{pet.feeding_notes}</dd>
+        </div>
+      )}
+      {(isMeal || routine.category === 'medication') && pet.allergies.length > 0 && (
+        <div>
+          <dt>Allergies</dt>
+          <dd>
+            <Tags values={pet.allergies} tone="alert" />
+          </dd>
         </div>
       )}
       {routine.notes && (

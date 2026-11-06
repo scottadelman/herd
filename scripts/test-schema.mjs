@@ -281,5 +281,63 @@ const old = (await as(users.scott, `insert into public.sitter_links (household_i
 await expectError('an expired link stops working', () => asAnon(`select public.sitter_view($1)`, [old.token]), /expired or was turned off/);
 await expectError('a made-up token gets nothing', () => asAnon(`select public.sitter_view('0000')`), /expired or was turned off/);
 
+// ---------------------------------------------------------------------------
+// Upgrade 003: pet profiles, supplies, walk places
+// ---------------------------------------------------------------------------
+console.log('\n-- upgrade 003 --');
+
+await as(users.partner,
+  `update public.pets set breed = 'Lab mix', birthday = '2019-04-02', sex = 'female', fixed = true,
+     allergies = array['chicken'], likes = array['tennis balls'], dislikes = array['golden retrievers', 'baths'],
+     food = 'Salmon kibble', food_amount = '1 cup', feeding_notes = 'Soak for 5 minutes',
+     vet_clinic = 'Park Slope Vet', vet_phone = '(718) 555-0100'
+   where id = $1`, [pet.id]);
+const prof = (await as(users.scott, `select * from public.pets where id = $1`, [pet.id])).rows[0];
+check('members fill in a pet profile', prof.breed === 'Lab mix' && prof.dislikes.includes('golden retrievers') && prof.food_amount === '1 cup');
+const hog = (await as(users.scott, `insert into public.pets (household_id, name, species, species_label, emoji) values ($1, 'Quill', 'other', 'Hedgehog', '🦔') returning *`, [h.id])).rows[0];
+check('an "other" pet says what kind it is', hog.species_label === 'Hedgehog' && hog.allergies.length === 0);
+await expectError('sex must be female or male', () => as(users.scott, `update public.pets set sex = 'x' where id = $1`, [pet.id]), /check constraint/);
+
+const food = (
+  await as(users.scott,
+    `insert into public.supplies (household_id, name, kind, pet_ids, opened_on, lasts_days) values ($1, 'Salmon kibble 30 lb', 'food', array[$2]::uuid[], $3, 28) returning *`,
+    [h.id, pet.id, today])
+).rows[0];
+check('add a food bag with how long it lasts', food.lasts_days === 28 && food.lead_days === 5);
+await as(users.partner, `update public.supplies set ordered_on = $1 where id = $2`, [today, food.id]);
+check('anyone in the household marks it ordered', (await as(users.scott, `select ordered_on from public.supplies where id = $1`, [food.id])).rows[0].ordered_on !== null);
+await as(users.partner, `update public.supplies set restocks = restocks || opened_on, opened_on = $1, ordered_on = null where id = $2`, [tomorrow, food.id]);
+check('opening a new bag keeps the old date', (await as(users.scott, `select restocks from public.supplies where id = $1`, [food.id])).rows[0].restocks.length === 1);
+await expectError('order links must be web links', () => as(users.scott, `update public.supplies set order_url = 'javascript:alert(1)' where id = $1`, [food.id]), /check constraint/);
+await as(users.partner, `update public.household_members set notify_supplies = false where user_id = $1 and household_id = $2`, [users.partner, h.id]);
+check('members turn reorder reminders off', (await as(users.partner, `select notify_supplies from public.household_members where user_id = $1 and household_id = $2`, [users.partner, h.id])).rows[0].notify_supplies === false);
+check('strangers can’t see supplies',(await as(users.stranger, `select * from public.supplies`)).rows.length === 0);
+await expectError('strangers can’t add supplies to The Den', () =>
+  as(users.stranger, `insert into public.supplies (household_id, name, lasts_days) values ($1, 'x', 10)`, [h.id]), /row-level security/);
+await expectError('supplies can’t move to another household', () =>
+  as(users.scott, `update public.supplies set household_id = $1 where id = $2`, [h2.id, food.id]), /permission denied/);
+
+const route = (
+  await as(users.partner,
+    `insert into public.places (household_id, kind, name, points) values ($1, 'route', 'Morning loop', '[[40.67,-73.97],[40.671,-73.968],[40.672,-73.97]]') returning *`,
+    [h.id])
+).rows[0];
+check('save a walk route', route.points.length === 3);
+await as(users.scott, `insert into public.places (household_id, kind, name, points) values ($1, 'bag_spot', 'Bags by the gate', '[[40.67,-73.97]]')`, [h.id]);
+await expectError('a place needs at least one point', () =>
+  as(users.scott, `insert into public.places (household_id, kind, name, points) values ($1, 'park', 'Nowhere', '[]')`, [h.id]), /check constraint/);
+check('strangers can’t see places', (await as(users.stranger, `select * from public.places`)).rows.length === 0);
+
+const link3 = (
+  await as(users.scott,
+    `insert into public.sitter_links (household_id, label, pet_ids, expires_at) values ($1, 'Sam', array[$2]::uuid[], now() + interval '1 day') returning token`,
+    [h.id, pet.id])
+).rows[0];
+const view3 = (await asAnon(`select public.sitter_view($1) as v`, [link3.token])).rows[0].v;
+check('sitter sees the pet profile', view3.pets[0].food_amount === '1 cup' && view3.pets[0].dislikes.includes('golden retrievers'));
+check('sitter sees the walk places', view3.places.length === 2 && view3.places.some((p) => p.name === 'Morning loop'));
+check('sitter still sees only the pets on the link', view3.pets.length === 1);
+await expectError('the sitter link can’t read supplies', () => asAnon(`select * from public.supplies`), /permission denied/);
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exit(failures ? 1 : 0);

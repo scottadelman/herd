@@ -1,16 +1,32 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { addDays, todayISO } from './lib/dates';
 import { snoozeTarget, type DayItem } from './lib/day';
 import { firstName, memberById } from './lib/people';
-import type { Backend, CompleteResult, Household, LogPatch, Member, Session, Snapshot, TaskLog } from './lib/types';
+import type { Backend, Category, CompleteResult, Household, LogPatch, Member, Session, Snapshot, TaskLog } from './lib/types';
 import { useToast } from './ui';
 
 export const HISTORY_DAYS = 14;
+
+/** What the Add button can start with. */
+export type AddPreset =
+  | { kind: 'menu'; date?: string; petId?: string }
+  | { kind: 'event'; date?: string; petId?: string }
+  | { kind: 'routine'; petId?: string; category?: Category }
+  | { kind: 'log'; date?: string; petId?: string }
+  | { kind: 'supply'; petId?: string }
+  | { kind: 'pet' };
 
 export interface AppState {
   backend: Backend;
   session: Session;
   snapshot: Snapshot;
+  /** Every check-off loaded so far: the recent ones plus any older history. */
+  logs: TaskLog[];
+  /** The earliest day whose check-offs are loaded. */
+  historyFrom: string;
+  historyLoading: boolean;
+  /** Load check-offs back to this day (the calendar and history call this). */
+  loadHistory: (from: string) => void;
   me: Member;
   households: Household[];
   switchHousehold: (id: string) => void;
@@ -23,7 +39,7 @@ export interface AppState {
   snooze: (item: DayItem) => Promise<void>;
   undo: (log: TaskLog) => Promise<void>;
   editLog: (log: TaskLog, patch: LogPatch) => Promise<void>;
-  logAdhoc: (petId: string, title: string, note: string | null) => Promise<void>;
+  logAdhoc: (petId: string, title: string, note: string | null, date?: string) => Promise<void>;
   /** Run a backend call, reload afterwards, and show any error as a toast. */
   run: <T>(fn: () => Promise<T>, success?: string) => Promise<T | undefined>;
   onLeftHousehold: () => void;
@@ -33,6 +49,10 @@ export interface AppState {
   setDate: (d: string) => void;
   goToDay: (d: string) => void;
   openSitterPreview: (token: string) => void;
+  /** Open a pet's full profile on the Pets tab. */
+  viewPet: (petId: string) => void;
+  openAdd: (preset?: AddPreset) => void;
+  openMap: () => void;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -61,10 +81,23 @@ export function useHouseholdData(backend: Backend, session: Session, household: 
   const pending = useRef<number | undefined>(undefined);
   const snapRef = useRef<Snapshot | null>(null);
   snapRef.current = snapshot;
+  // Older check-offs, loaded when someone looks further back than HISTORY_DAYS.
+  const [older, setOlder] = useState<{ from: string; logs: TaskLog[] } | null>(null);
+  const olderRef = useRef(older);
+  olderRef.current = older;
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const historyQueue = useRef<Promise<void>>(Promise.resolve());
 
   const reload = useCallback(async () => {
     try {
-      const snap = await backend.loadSnapshot(household.id, addDays(todayISO(), -HISTORY_DAYS));
+      const since = addDays(todayISO(), -HISTORY_DAYS);
+      const snap = await backend.loadSnapshot(household.id, since);
+      const old = olderRef.current;
+      if (old && old.from < since) {
+        const logs = await backend.loadLogs(household.id, old.from, addDays(since, -1));
+        setOlder({ from: old.from, logs });
+        for (const l of logs) known.current.add(l.id);
+      }
       // Announce check-offs made by other people (or a sitter) since the last load.
       const doneNow = new Map(snap.logs.filter((l) => l.status === 'done').map((l) => [l.id, l.done_at]));
       if (seenDone.current) {
@@ -88,6 +121,9 @@ export function useHouseholdData(backend: Backend, session: Session, household: 
         ...snap.logs.map((l) => l.id),
         ...snap.weights.map((w) => w.id),
         ...snap.sitterLinks.map((s) => s.id),
+        ...snap.supplies.map((s) => s.id),
+        ...snap.places.map((p) => p.id),
+        ...(olderRef.current?.logs ?? []).map((l) => l.id),
       ]);
       setSnapshot(snap);
       setError(null);
@@ -129,6 +165,45 @@ export function useHouseholdData(backend: Backend, session: Session, household: 
   }, [snapshot, backend, household.id, session.userId]);
 
   const patchLogs = (fn: (logs: TaskLog[]) => TaskLog[]) => setSnapshot((s) => (s ? { ...s, logs: fn(s.logs) } : s));
+  /** For edits and undos, which can touch older history too. */
+  const patchAll = (fn: (logs: TaskLog[]) => TaskLog[]) => {
+    patchLogs(fn);
+    setOlder((o) => (o ? { ...o, logs: fn(o.logs) } : o));
+  };
+
+  const loadHistory = useCallback(
+    (from: string) => {
+      historyQueue.current = historyQueue.current.then(async () => {
+        const since = addDays(todayISO(), -HISTORY_DAYS);
+        const have = olderRef.current?.from ?? since;
+        if (from >= have) return;
+        setHistoryLoading(true);
+        try {
+          const logs = await backend.loadLogs(household.id, from, addDays(have, -1));
+          for (const l of logs) known.current.add(l.id);
+          const next = { from, logs: [...(olderRef.current?.logs ?? []), ...logs] };
+          olderRef.current = next;
+          setOlder(next);
+        } catch (e) {
+          toast(`Couldn’t load older history. ${(e as Error).message}`, 'error');
+        } finally {
+          setHistoryLoading(false);
+        }
+      });
+    },
+    [backend, household.id, toast],
+  );
+
+  const logs = useMemo(() => {
+    if (!snapshot) return [];
+    if (!older?.logs.length) return snapshot.logs;
+    const since = addDays(todayISO(), -HISTORY_DAYS);
+    const ids = new Set(snapshot.logs.map((l) => l.id));
+    // Recent days always come from the snapshot, so deletes there stick.
+    const extra = older.logs.filter((l) => !ids.has(l.id) && l.occurrence_date < since && (!l.snoozed_to || l.snoozed_to < since));
+    return [...snapshot.logs, ...extra];
+  }, [snapshot, older]);
+  const historyFrom = older?.from ?? addDays(todayISO(), -HISTORY_DAYS);
 
   const tempLog = (item: DayItem, extra: Partial<TaskLog>): TaskLog => ({
     id: `temp-${Date.now()}`,
@@ -173,11 +248,11 @@ export function useHouseholdData(backend: Backend, session: Session, household: 
           // A task someone moved here: finish it, or push it along another day.
           const log = item.log;
           if (status === 'snoozed') {
-            patchLogs((logs) => logs.map((l) => (l.id === log.id ? { ...l, snoozed_to: snoozedTo, done_by: session.userId } : l)));
+            patchAll((logs) => logs.map((l) => (l.id === log.id ? { ...l, snoozed_to: snoozedTo, done_by: session.userId } : l)));
             await backend.updateLog(log.id, { snoozed_to: snoozedTo, done_by: session.userId, done_at: new Date().toISOString() });
             return;
           }
-          patchLogs((logs) =>
+          patchAll((logs) =>
             logs.map((l) => (l.id === log.id ? { ...l, status, note: note ?? null, done_by: session.userId, done_at: new Date().toISOString() } : l)),
           );
           settle(await backend.finishMoved(log.id, status, note), null);
@@ -222,10 +297,10 @@ export function useHouseholdData(backend: Backend, session: Session, household: 
             sitter_link_id: null,
             sitter_name: null,
           };
-          patchLogs((logs) => logs.map((l) => (l.id === log.id ? { ...l, ...patch } : l)));
+          patchAll((logs) => logs.map((l) => (l.id === log.id ? { ...l, ...patch } : l)));
           await backend.updateLog(log.id, patch);
         } else {
-          patchLogs((logs) => logs.filter((l) => l.id !== log.id));
+          patchAll((logs) => logs.filter((l) => l.id !== log.id));
           await backend.undoTask(log.id);
         }
       } catch (e) {
@@ -238,7 +313,7 @@ export function useHouseholdData(backend: Backend, session: Session, household: 
 
   const editLog = useCallback(
     async (log: TaskLog, patch: LogPatch) => {
-      patchLogs((logs) => logs.map((l) => (l.id === log.id ? { ...l, ...patch } : l)));
+      patchAll((logs) => logs.map((l) => (l.id === log.id ? { ...l, ...patch } : l)));
       try {
         await backend.updateLog(log.id, patch);
         if (patch.done_at) seenDone.current?.set(log.id, patch.done_at);
@@ -251,16 +326,24 @@ export function useHouseholdData(backend: Backend, session: Session, household: 
   );
 
   const logAdhoc = useCallback(
-    async (petId: string, title: string, note: string | null) => {
+    async (petId: string, title: string, note: string | null, date?: string) => {
+      const today = todayISO();
+      const day = date && date < today ? date : today;
+      // Something logged for an earlier day is stamped at noon that day.
+      const doneAt = day === today ? undefined : (() => {
+        const [y, m, d] = day.split('-').map(Number);
+        return new Date(y, m - 1, d, 12, 0).toISOString();
+      })();
       try {
         const res = await backend.completeTask({
           householdId: household.id,
           petId,
           routineId: null,
-          date: todayISO(),
+          date: day,
           slot: 'adhoc',
           title,
           note,
+          doneAt,
         });
         settle(res, null);
       } catch (e) {
@@ -285,5 +368,21 @@ export function useHouseholdData(backend: Backend, session: Session, household: 
     [toast, reload],
   );
 
-  return { snapshot, error, freshLogIds, reload, checkOff, skip, snooze, undo, editLog, logAdhoc, run };
+  return {
+    snapshot,
+    logs,
+    historyFrom,
+    historyLoading,
+    loadHistory,
+    error,
+    freshLogIds,
+    reload,
+    checkOff,
+    skip,
+    snooze,
+    undo,
+    editLog,
+    logAdhoc,
+    run,
+  };
 }

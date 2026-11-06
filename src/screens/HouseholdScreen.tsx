@@ -124,8 +124,8 @@ export function HouseholdScreen() {
         <h2 className="group-label">Invite someone</h2>
         <div className="panel stack">
           <p className="muted">
-            For people who help every day: a partner, roommate or kid. They make an account and see everything. For a
-            walker or sitter, use a sitter link below instead.
+            For people who help every day: a partner, roommate or kid. They make an account and see everything, including the
+            calendar and all the history from before they joined. For a walker or sitter, use a sitter link below instead.
           </p>
           <p className="invite-code" aria-label={`Invite code ${code.split('').join(' ')}`}>
             {prettyCode}
@@ -429,8 +429,9 @@ function SitterLinkSheet({ onClose, onCreated }: { onClose: () => void; onCreate
           <Chips<string> label="Link works for" value={duration} onChange={setDuration} options={DURATIONS.map((d) => ({ value: d.value, label: d.label }))} />
         </div>
         <p className="muted small">
-          They’ll see today’s tasks and the pet notes for these pets, and can check things off. They won’t see the calendar,
-          history, other pets, or your household’s people and invite code.
+          They’ll see today’s tasks for these pets, each pet’s feeding, allergies, likes and dislikes and vet, and your walk
+          map, and can check things off. They won’t see the calendar, history, other pets, or your household’s people and
+          invite code.
         </p>
       </form>
     </Sheet>
@@ -457,7 +458,7 @@ function RemindersPanel() {
     };
   }, []);
 
-  const save = (prefs: Partial<Pick<Member, 'notify_late' | 'notify_daily'>>) =>
+  const save = (prefs: Partial<Pick<Member, 'notify_late' | 'notify_daily' | 'notify_supplies'>>) =>
     run(() => backend.updateMyReminders(snapshot.household.id, prefs));
 
   async function toggleDevice() {
@@ -531,6 +532,7 @@ function RemindersPanel() {
             <span className="muted"> Today’s tasks, plus medications, vaccines and vet visits coming up tomorrow.</span>
           </span>
         </label>
+
         {me.notify_daily && (
           <div className="time-row">
             <input
@@ -545,6 +547,19 @@ function RemindersPanel() {
             </button>
           </div>
         )}
+        <label className="check-row">
+          <input
+            id="notify-supplies"
+            type="checkbox"
+            checked={me.notify_supplies}
+            disabled={snapshot.behind}
+            onChange={(e) => save({ notify_supplies: e.target.checked })}
+          />
+          <span>
+            When it’s time to order food or supplies
+            <span className="muted"> At 9 AM on the order-by day, and again the day before it runs out if nobody has ordered.</span>
+          </span>
+        </label>
       </div>
     </section>
   );

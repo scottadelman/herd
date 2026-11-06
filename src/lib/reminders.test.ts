@@ -2,15 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   computeReminders,
   localNow,
+  needsOrder as serverNeedsOrder,
   occurrences,
   openItems,
+  supplyDates,
   type ReminderInput,
   type RRoutine,
+  type RSupply,
 } from '../../supabase/functions/send-reminders/src/logic.ts';
 import { addDays } from './dates';
 import { buildDay } from './day';
 import { occurrencesForDate } from './schedule';
-import type { Routine, TaskLog } from './types';
+import { needsOrder, supplyStatus } from './supplies';
+import { EMPTY_PROFILE, type Routine, type Supply, type TaskLog } from './types';
 
 const routine = (over: Partial<RRoutine>): RRoutine => ({
   id: 'r1',
@@ -111,7 +115,66 @@ describe('morning summary', () => {
   });
 });
 
+const supply = (over: Partial<RSupply> = {}): RSupply => ({
+  id: 's1',
+  household_id: 'h1',
+  name: 'Salmon kibble',
+  pet_ids: ['p1'],
+  // Runs out Nov 10; order by Nov 5.
+  opened_on: '2026-10-13',
+  lasts_days: 28,
+  lead_days: 5,
+  ordered_on: null,
+  ...over,
+});
+
+describe('reorder reminders', () => {
+  it('go out at 9 AM on the order-by day', () => {
+    const input = base({ routines: [], supplies: [supply()] });
+    expect(computeReminders(input, at(8, 55))).toEqual([]);
+    const out = computeReminders(input, at(9, 2));
+    expect(out.map((r) => r.userId)).toEqual(['jamie', 'priya']);
+    expect(out[0].title).toBe('Time to order more Salmon kibble');
+    expect(out[0].body).toBe('About 5 days left for Biscuit. Tap “I ordered it” in Herd so nobody orders twice.');
+  });
+  it('remind again on the last day, and not in between', () => {
+    expect(computeReminders(base({ routines: [], supplies: [supply({ opened_on: '2026-10-11' })] }), at(9, 2))).toEqual([]);
+    const last = computeReminders(base({ routines: [], supplies: [supply({ opened_on: '2026-10-09' })] }), at(9, 2));
+    expect(last[0].title).toBe('Salmon kibble runs out tomorrow');
+  });
+  it('stop once someone orders, and respect people who turned them off', () => {
+    expect(computeReminders(base({ routines: [], supplies: [supply({ ordered_on: '2026-11-04' })] }), at(9, 2))).toEqual([]);
+    const members = [
+      { household_id: 'h1', user_id: 'jamie', notify_late: true, notify_daily: null, notify_supplies: false },
+      { household_id: 'h1', user_id: 'priya', notify_late: true, notify_daily: null },
+    ];
+    expect(computeReminders(base({ routines: [], members, supplies: [supply()] }), at(9, 2)).map((r) => r.userId)).toEqual(['priya']);
+  });
+  it('show up in the morning summary', () => {
+    const out = computeReminders(base({ routines: [], supplies: [supply({ opened_on: '2026-10-11' })] }), at(7, 31));
+    expect(out).toHaveLength(1);
+    expect(out[0].body).toBe('Order soon: Salmon kibble.');
+  });
+});
+
 describe('server rules match the app', () => {
+  it('agree on when to order supplies', () => {
+    for (const lasts of [7, 14, 30, 45]) {
+      for (const lead of [0, 3, 5, 10]) {
+        for (const ordered of [null, '2026-10-01', '2026-10-25']) {
+          const s = supply({ lasts_days: lasts, lead_days: lead, opened_on: '2026-10-20', ordered_on: ordered });
+          const app: Supply = { ...s, kind: 'food', restocks: [], order_url: null, notes: null, created_by: null, created_at: '' };
+          for (let i = 0; i < 60; i++) {
+            const d = addDays('2026-10-20', i);
+            const st = supplyStatus(app, d);
+            expect(supplyDates(s)).toEqual({ runOut: st.runOut, orderBy: st.orderBy });
+            expect(serverNeedsOrder(s, d), `${lasts}/${lead}/${ordered} on ${d}`).toBe(needsOrder(app, d));
+          }
+        }
+      }
+    }
+  });
+
   const kinds: Partial<RRoutine>[] = [
     { kind: 'daily', times: ['07:00', '18:00'] },
     { kind: 'daily', times: [] },
@@ -140,7 +203,7 @@ describe('server rules match the app', () => {
       { id: 'c', household_id: 'h1', pet_id: 'p1', routine_id: 'r1', occurrence_date: '2026-11-04', slot: 'any', title: 'x', note: null, status: 'snoozed', snoozed_to: '2026-11-05', done_by: 'u', sitter_link_id: null, sitter_name: null, done_at: '' },
       { id: 'd', household_id: 'h1', pet_id: 'p1', routine_id: 'r1', occurrence_date: '2026-11-05', slot: 'any', title: 'x', note: null, status: 'skipped', snoozed_to: null, done_by: 'u', sitter_link_id: null, sitter_name: null, done_at: '' },
     ];
-    const pets = [{ id: 'p1', household_id: 'h1', name: 'Biscuit', species: 'dog' as const, emoji: '', notes: null, photo: null, created_at: '' }];
+    const pets = [{ id: 'p1', household_id: 'h1', name: 'Biscuit', species: 'dog' as const, emoji: '', notes: null, photo: null, created_at: '', ...EMPTY_PROFILE }];
     for (const d of ['2026-11-04', '2026-11-05', '2026-11-06']) {
       const app = buildDay({ pets, routines: routines as unknown as Routine[], logs }, d)
         .filter((i) => i.state === 'open')

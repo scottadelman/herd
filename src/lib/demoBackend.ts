@@ -10,21 +10,26 @@ import type {
   Household,
   Member,
   Pet,
+  Place,
   Routine,
   Session,
   SitterLink,
   SitterSnapshot,
   Snapshot,
+  Supply,
   TaskLog,
   Weight,
 } from './types';
+import { EMPTY_PROFILE } from './types';
 
 // A self-contained backend that runs entirely in the browser. It powers
 // "Try the demo" and the preview build, and simulates a second household
 // member (Priya) checking something off a few seconds after you arrive, so
 // live sync is visible without a server.
 
-const STORE_KEY = 'herd-demo-v2';
+const STORE_KEY = 'herd-demo-v3';
+/** Days of made-up history, so the calendar has a past to look back on. */
+const HISTORY = 35;
 const ME = 'demo-jamie';
 const PRIYA = 'demo-priya';
 const HID = 'demo-household';
@@ -37,6 +42,8 @@ interface DemoState {
   logs: TaskLog[];
   weights: Weight[];
   sitterLinks: SitterLink[];
+  supplies: Supply[];
+  places: Place[];
 }
 
 let counter = 0;
@@ -56,7 +63,7 @@ function seed(): DemoState {
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const created = new Date().toISOString();
 
-  const pet = (id: string, name: string, species: Pet['species'], emoji: string, notes: string | null): Pet => ({
+  const pet = (id: string, name: string, species: Pet['species'], emoji: string, notes: string | null, profile: Partial<Pet>): Pet => ({
     id,
     household_id: HID,
     name,
@@ -65,7 +72,15 @@ function seed(): DemoState {
     notes,
     photo: null,
     created_at: created,
+    ...EMPTY_PROFILE,
+    ...profile,
   });
+  const vet: Partial<Pet> = {
+    vet_clinic: 'Prospect Park Animal Clinic',
+    vet_name: 'Dr. Lee',
+    vet_phone: '(718) 555-0142',
+    vet_address: '220 7th Ave, Brooklyn, NY',
+  };
   const routine = (id: string, pet_id: string, title: string, times: string[], extra: Partial<Routine> = {}): Routine => ({
     id,
     household_id: HID,
@@ -77,7 +92,7 @@ function seed(): DemoState {
     times,
     weekdays: [],
     interval_days: null,
-    start_date: addDays(today, -30),
+    start_date: addDays(today, -HISTORY),
     assignee: null,
     notes: null,
     active: true,
@@ -86,9 +101,43 @@ function seed(): DemoState {
   });
 
   const pets = [
-    pet('pet-biscuit', 'Biscuit', 'dog', '🐕', 'Two cups of kibble per meal. Allergic to chicken. Pulls toward squirrels, so keep a short leash.'),
-    pet('pet-olive', 'Olive', 'cat', '🐈‍⬛', 'Wet food in the morning, dry at night. Hides under the bed during storms.'),
-    pet('pet-kiwi', 'Kiwi', 'bird', '🦜', 'Seed mix plus fresh greens. Cover the cage around 9 PM.'),
+    pet('pet-biscuit', 'Biscuit', 'dog', '🐕', 'Pulls toward squirrels, so keep a short leash. Spare key is with the doorman.', {
+      ...vet,
+      breed: 'Lab mix',
+      birthday: addDays(today, -365 * 6 - 40),
+      sex: 'male',
+      fixed: true,
+      microchip: '985 112 004 518 223',
+      allergies: ['Chicken'],
+      likes: ['Tennis balls', 'Belly rubs', 'Peanut butter'],
+      dislikes: ['Golden retrievers', 'Skateboards', 'Baths'],
+      food: 'Salmon and rice kibble',
+      food_amount: '2 cups',
+      feeding_notes: 'Soak in warm water for 5 minutes. Joint tablet goes in with breakfast.',
+    }),
+    pet('pet-olive', 'Olive', 'cat', '🐈‍⬛', 'Hides under the bed during storms. Leave her be.', {
+      ...vet,
+      breed: 'Bombay',
+      birthday: addDays(today, -365 * 4 - 120),
+      sex: 'female',
+      fixed: true,
+      likes: ['Feather wand', 'The sunny windowsill'],
+      dislikes: ['Being picked up', 'The vacuum'],
+      food: 'Tuna pâté in the morning, dry food at night',
+      food_amount: '½ can wet, ¼ cup dry',
+      feeding_notes: 'Thyroid pill hides best in a pill pocket.',
+    }),
+    pet('pet-kiwi', 'Kiwi', 'bird', '🦜', 'Cover the cage around 9 PM.', {
+      breed: 'Green-cheeked conure',
+      birthday: addDays(today, -365 * 2 - 15),
+      likes: ['Millet', 'Whistling back and forth'],
+      dislikes: ['Hats'],
+      food: 'Seed mix plus fresh greens',
+      food_amount: '2 tablespoons',
+      feeding_notes: 'No avocado or chocolate, ever.',
+      vet_clinic: 'Brooklyn Bird and Exotics',
+      vet_phone: '(718) 555-0199',
+    }),
   ];
 
   const routines = [
@@ -104,7 +153,7 @@ function seed(): DemoState {
     routine('r-biscuit-heartworm', 'pet-biscuit', 'Heartworm chewable', [], {
       kind: 'interval',
       interval_days: 30,
-      start_date: addDays(today, -30),
+      start_date: addDays(today, -60),
       category: 'medication',
       dose: '1 chewable',
     }),
@@ -129,7 +178,12 @@ function seed(): DemoState {
     routine('r-olive-litter', 'pet-olive', 'Scoop litter box', []),
     routine('r-kiwi-food', 'pet-kiwi', 'Food and water', ['08:00']),
     routine('r-kiwi-cover', 'pet-kiwi', 'Cover the cage', ['21:00']),
-    routine('r-kiwi-clean', 'pet-kiwi', 'Clean cage', [], { kind: 'interval', interval_days: 7, start_date: addDays(today, -8) }),
+    routine('r-kiwi-clean', 'pet-kiwi', 'Clean cage', [], { kind: 'interval', interval_days: 7, start_date: addDays(today, -HISTORY - 1) }),
+    routine('r-biscuit-groom', 'pet-biscuit', 'Grooming appointment', ['14:00'], {
+      kind: 'once',
+      start_date: addDays(today, -18),
+      notes: 'Paws and Claws on 5th Ave.',
+    }),
   ];
 
   const maria: SitterLink = {
@@ -166,7 +220,7 @@ function seed(): DemoState {
   // Maria the dog walker handles weekday midday walks.
   const logs: TaskLog[] = [];
   let n = 0;
-  for (let back = 5; back >= 0; back--) {
+  for (let back = HISTORY; back >= 0; back--) {
     const date = addDays(today, -back);
     for (const r of routines) {
       for (const slot of occurrencesForDate(r, date)) {
@@ -178,6 +232,7 @@ function seed(): DemoState {
           logs.push(log(r, date, slot, { status: 'snoozed', snoozed_to: today, done_by: PRIYA, done_at: stampAt(date, '19:10', 0) }));
           continue;
         }
+        if (r.id === 'r-olive-litter' && back === 12) continue; // a missed one, for the calendar
         if (r.id === 'r-biscuit-walk-pm' && back === 3) {
           logs.push(log(r, date, slot, { status: 'skipped', note: 'Pouring rain. Played fetch inside.', done_at: stampAt(date, '20:05', 0) }));
           continue;
@@ -219,6 +274,53 @@ function seed(): DemoState {
     recorded_by: ME,
     created_at: created,
   });
+  const supply = (id: string, name: string, kind: Supply['kind'], pet_ids: string[], openedAgo: number, lasts: number, lead: number, extra: Partial<Supply> = {}): Supply => ({
+    id,
+    household_id: HID,
+    name,
+    kind,
+    pet_ids,
+    opened_on: addDays(today, -openedAgo),
+    lasts_days: lasts,
+    lead_days: lead,
+    ordered_on: null,
+    restocks: [addDays(today, -openedAgo - lasts * 2 - 1), addDays(today, -openedAgo - lasts)],
+    order_url: null,
+    notes: null,
+    created_by: ME,
+    created_at: created,
+    ...extra,
+  });
+  const supplies = [
+    supply('sup-kibble', 'Salmon and rice kibble, 30 lb', 'food', ['pet-biscuit'], 24, 28, 5, {
+      order_url: 'https://www.chewy.com/',
+      notes: 'Autoship is off. Order the grain-inclusive one.',
+    }),
+    supply('sup-litter', 'Clumping litter', 'litter', ['pet-olive'], 9, 30, 5),
+    supply('sup-tuna', 'Tuna pâté, case of 24', 'food', ['pet-olive'], 16, 24, 4, { ordered_on: addDays(today, -1) }),
+    supply('sup-seed', 'Conure seed mix', 'food', ['pet-kiwi'], 20, 60, 7),
+  ];
+
+  // Around Prospect Park, Brooklyn.
+  const place = (id: string, kind: Place['kind'], name: string, notes: string | null, points: [number, number][]): Place => ({
+    id,
+    household_id: HID,
+    kind,
+    name,
+    notes,
+    points,
+    created_by: ME,
+    created_at: created,
+  });
+  const places = [
+    place('pl-loop', 'route', 'Morning loop', 'Biscuit’s usual. Skip 9th St when the farmers market is on.', [
+      [40.6703, -73.9792], [40.6688, -73.9806], [40.6672, -73.9783], [40.6659, -73.9762], [40.6648, -73.9741],
+      [40.6661, -73.9718], [40.6679, -73.9705], [40.6696, -73.9728], [40.6709, -73.9752], [40.6703, -73.9792],
+    ]),
+    place('pl-meadow', 'park', 'Long Meadow', 'Off leash before 9 AM. Lots of goldens on weekends.', [[40.6668, -73.9733]]),
+    place('pl-bags', 'bag_spot', 'Bag dispenser at 3rd St', 'Usually stocked. The one at 9th St is often empty.', [[40.6714, -73.9718]]),
+  ];
+
   const weights = [
     weight('pet-biscuit', 150, 66.2),
     weight('pet-biscuit', 120, 65.4),
@@ -234,14 +336,16 @@ function seed(): DemoState {
   return {
     household: { id: HID, name: 'The Parkers', invite_code: 'HXK4P9TQ', created_by: ME, timezone: null },
     members: [
-      { user_id: ME, role: 'owner', color: MEMBER_COLORS[0], display_name: 'Jamie', notify_late: true, notify_daily: '07:30' },
-      { user_id: PRIYA, role: 'member', color: MEMBER_COLORS[1], display_name: 'Priya', notify_late: true, notify_daily: null },
+      { user_id: ME, role: 'owner', color: MEMBER_COLORS[0], display_name: 'Jamie', notify_late: true, notify_daily: '07:30', notify_supplies: true },
+      { user_id: PRIYA, role: 'member', color: MEMBER_COLORS[1], display_name: 'Priya', notify_late: true, notify_daily: null, notify_supplies: true },
     ],
     pets,
     routines,
     logs: logs.sort((a, b) => b.done_at.localeCompare(a.done_at)),
     weights,
     sitterLinks: [maria],
+    supplies,
+    places,
   };
 }
 
@@ -270,6 +374,7 @@ export function resetDemo() {
   try {
     localStorage.removeItem(STORE_KEY);
     localStorage.removeItem('herd-demo-v1');
+    localStorage.removeItem('herd-demo-v2');
   } catch {
     /* ignore */
   }
@@ -306,7 +411,7 @@ export function createDemoBackend(): Backend {
     done_by: ME,
     sitter_link_id: null,
     sitter_name: null,
-    done_at: new Date().toISOString(),
+    done_at: input.doneAt ?? new Date().toISOString(),
     ...who,
   });
 
@@ -371,9 +476,19 @@ export function createDemoBackend(): Backend {
     async joinHousehold() {
       throw new Error('The demo has one household. Create an account to join a real one.');
     },
-    async loadSnapshot(): Promise<Snapshot> {
+    async loadSnapshot(_hid, since): Promise<Snapshot> {
       await pause();
-      return clone({ ...state, sitterLinks: state.sitterLinks.filter((l) => !l.revoked && new Date(l.expires_at) > new Date()) });
+      return clone({
+        ...state,
+        // Like the real server: recent history only. Older days load on demand.
+        logs: state.logs.filter((l) => l.occurrence_date >= since || (l.snoozed_to ?? '') >= since),
+        sitterLinks: state.sitterLinks.filter((l) => !l.revoked && new Date(l.expires_at) > new Date()),
+      });
+    },
+    async loadLogs(_hid, from, to) {
+      await pause();
+      const inRange = (d: string | null) => !!d && d >= from && d <= to;
+      return clone(state.logs.filter((l) => inRange(l.occurrence_date) || inRange(l.snoozed_to)));
     },
     subscribe(_hid, onChange) {
       changeListeners.add(onChange);
@@ -427,6 +542,7 @@ export function createDemoBackend(): Backend {
       state.routines = state.routines.filter((r) => r.pet_id !== id);
       state.logs = state.logs.filter((l) => l.pet_id !== id);
       state.weights = state.weights.filter((w) => w.pet_id !== id);
+      state.supplies = state.supplies.map((x) => ({ ...x, pet_ids: x.pet_ids.filter((p) => p !== id) }));
       commit({ table: 'pets', type: 'DELETE' });
     },
     async addRoutine(hid, input) {
@@ -484,6 +600,34 @@ export function createDemoBackend(): Backend {
       state.weights = state.weights.filter((w) => w.id !== id);
       commit({ table: 'pet_weights', type: 'DELETE' });
     },
+    async addSupply(hid, input) {
+      const x: Supply = { ...input, id: newId('sup'), household_id: hid, ordered_on: null, restocks: [], created_by: ME, created_at: new Date().toISOString() };
+      state.supplies.push(x);
+      commit({ table: 'supplies', type: 'INSERT' });
+      return clone(x);
+    },
+    async updateSupply(id, patch) {
+      state.supplies = state.supplies.map((x) => (x.id === id ? { ...x, ...patch } : x));
+      commit({ table: 'supplies', type: 'UPDATE' });
+    },
+    async deleteSupply(id) {
+      state.supplies = state.supplies.filter((x) => x.id !== id);
+      commit({ table: 'supplies', type: 'DELETE' });
+    },
+    async addPlace(hid, input) {
+      const x: Place = { ...input, id: newId('pl'), household_id: hid, created_by: ME, created_at: new Date().toISOString() };
+      state.places.push(x);
+      commit({ table: 'places', type: 'INSERT' });
+      return clone(x);
+    },
+    async updatePlace(id, input) {
+      state.places = state.places.map((x) => (x.id === id ? { ...x, ...input } : x));
+      commit({ table: 'places', type: 'UPDATE' });
+    },
+    async deletePlace(id) {
+      state.places = state.places.filter((x) => x.id !== id);
+      commit({ table: 'places', type: 'DELETE' });
+    },
     async createSitterLink(hid, input) {
       const link: SitterLink = {
         ...input,
@@ -517,6 +661,7 @@ export function createDemoBackend(): Backend {
         pets,
         routines: state.routines.filter((r) => ids.has(r.pet_id) && r.active).map((r) => ({ ...r, assignee: null })),
         logs: state.logs.filter((x) => ids.has(x.pet_id) && x.routine_id && (near(x.occurrence_date) || near(x.snoozed_to))),
+        places: state.places.map(({ id, kind, name, notes, points }) => ({ id, kind, name, notes, points })),
       });
     },
     async sitterComplete(token, routineId, date, slot, note) {

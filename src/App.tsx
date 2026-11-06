@@ -12,7 +12,9 @@ import { PetsScreen } from './screens/Pets';
 import { ActivityScreen } from './screens/Activity';
 import { HouseholdScreen } from './screens/HouseholdScreen';
 import { SitterView } from './screens/Sitter';
-import { AppProvider, useHouseholdData } from './state';
+import { WalkMap } from './screens/WalkMap';
+import { AddFlow } from './sheets/AddFlow';
+import { AppProvider, useHouseholdData, type AddPreset } from './state';
 import { Icons, Sheet, Spinner } from './ui';
 
 type Tab = 'today' | 'calendar' | 'pets' | 'activity' | 'household';
@@ -213,12 +215,15 @@ function Shell({
   const [date, setDate] = useState(todayISO());
   const [adding, setAdding] = useState(false);
   const [previewToken, setPreviewToken] = useState<string | null>(null);
+  const [addPreset, setAddPreset] = useState<AddPreset | null>(null);
+  const [mapOpen, setMapOpen] = useState(false);
+  const [openPetId, setOpenPetId] = useState<string | null>(null);
   const data = useHouseholdData(backend, session, household);
   const { snapshot } = data;
 
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [tab]);
+  }, [tab, openPetId]);
 
   if (!snapshot) {
     return data.error ? (
@@ -246,13 +251,15 @@ function Shell({
     );
   }
 
+  // Today sits in the middle, as home.
   const tabs: { key: Tab; label: string; icon: JSX.Element }[] = [
-    { key: 'today', label: 'Today', icon: Icons.today },
-    { key: 'calendar', label: 'Calendar', icon: Icons.calendar },
     { key: 'pets', label: 'Pets', icon: Icons.paw },
+    { key: 'calendar', label: 'Calendar', icon: Icons.calendar },
+    { key: 'today', label: 'Today', icon: Icons.home },
     { key: 'activity', label: 'Activity', icon: Icons.activity },
-    { key: 'household', label: 'Household', icon: Icons.home },
+    { key: 'household', label: 'Household', icon: Icons.people },
   ];
+  const run = data.run;
 
   return (
     <AppProvider
@@ -260,6 +267,10 @@ function Shell({
         backend,
         session,
         snapshot,
+        logs: data.logs,
+        historyFrom: data.historyFrom,
+        historyLoading: data.historyLoading,
+        loadHistory: data.loadHistory,
         me,
         households,
         switchHousehold: onSwitch,
@@ -282,6 +293,12 @@ function Shell({
           setTab('today');
         },
         openSitterPreview: setPreviewToken,
+        viewPet: (id) => {
+          setOpenPetId(id);
+          setTab('pets');
+        },
+        openAdd: (preset) => setAddPreset(preset ?? { kind: 'menu' }),
+        openMap: () => setMapOpen(true),
       }}
     >
       <div className="app">
@@ -296,9 +313,9 @@ function Shell({
           </div>
         )}
         <main className="screen">
-          {tab === 'today' && <TodayScreen onGoToPets={() => setTab('pets')} />}
+          {tab === 'today' && <TodayScreen />}
           {tab === 'calendar' && <CalendarScreen />}
-          {tab === 'pets' && <PetsScreen />}
+          {tab === 'pets' && <PetsScreen openPetId={openPetId} setOpenPetId={setOpenPetId} />}
           {tab === 'activity' && <ActivityScreen />}
           {tab === 'household' && <HouseholdScreen />}
         </main>
@@ -306,10 +323,11 @@ function Shell({
           {tabs.map((t) => (
             <button
               key={t.key}
-              className={`tab${tab === t.key ? ' tab-on' : ''}`}
+              className={`tab${tab === t.key ? ' tab-on' : ''}${t.key === 'today' ? ' tab-home' : ''}`}
               aria-current={tab === t.key ? 'page' : undefined}
               onClick={() => {
                 if (t.key === 'today' && tab === 'today') setDate(todayISO());
+                if (t.key === 'pets' && tab === 'pets') setOpenPetId(null);
                 setTab(t.key);
               }}
             >
@@ -331,6 +349,23 @@ function Shell({
             }}
           />
         </Sheet>
+      )}
+
+      {addPreset && <AddFlow key={JSON.stringify(addPreset)} preset={addPreset} onClose={() => setAddPreset(null)} />}
+
+      {mapOpen && (
+        <WalkMap
+          title={`${snapshot.household.name} walk map`}
+          places={snapshot.places}
+          onClose={() => setMapOpen(false)}
+          onAdd={
+            snapshot.behind
+              ? undefined
+              : async (input) => !!(await run(() => backend.addPlace(snapshot.household.id, input).then(() => true), `Saved ${input.name}`))
+          }
+          onUpdate={async (id, input) => !!(await run(() => backend.updatePlace(id, input).then(() => true), 'Saved'))}
+          onDelete={async (id) => !!(await run(() => backend.deletePlace(id).then(() => true), 'Removed from the map'))}
+        />
       )}
 
       {previewToken && (

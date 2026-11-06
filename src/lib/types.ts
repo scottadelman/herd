@@ -29,19 +29,64 @@ export interface Member {
   notify_late: boolean;
   /** "HH:MM" for a morning summary, or null for none. */
   notify_daily: string | null;
+  /** A reminder when it's time to order more food or supplies. */
+  notify_supplies: boolean;
 }
+
+export type Sex = 'female' | 'male';
 
 export interface Pet {
   id: string;
   household_id: string;
   name: string;
   species: Species;
+  /** What kind of pet in the owner's words, when species is 'other'. */
+  species_label: string | null;
   emoji: string;
   notes: string | null;
   /** Small JPEG as a data URL, or null to show the emoji. */
   photo: string | null;
+  breed: string | null;
+  /** "YYYY-MM-DD" */
+  birthday: string | null;
+  sex: Sex | null;
+  /** Spayed or neutered. */
+  fixed: boolean | null;
+  microchip: string | null;
+  allergies: string[];
+  likes: string[];
+  dislikes: string[];
+  /** What they eat, e.g. "Salmon kibble". */
+  food: string | null;
+  /** How much per meal, e.g. "1 cup". */
+  food_amount: string | null;
+  feeding_notes: string | null;
+  vet_clinic: string | null;
+  vet_name: string | null;
+  vet_phone: string | null;
+  vet_address: string | null;
   created_at: string;
 }
+
+/** Every profile field a pet can have beyond the basics, empty. */
+export const EMPTY_PROFILE = {
+  species_label: null,
+  breed: null,
+  birthday: null,
+  sex: null,
+  fixed: null,
+  microchip: null,
+  allergies: [] as string[],
+  likes: [] as string[],
+  dislikes: [] as string[],
+  food: null,
+  food_amount: null,
+  feeding_notes: null,
+  vet_clinic: null,
+  vet_name: null,
+  vet_phone: null,
+  vet_address: null,
+} satisfies Partial<Pet>;
 
 export type ScheduleKind = 'daily' | 'weekly' | 'interval' | 'once';
 export type Category = 'care' | 'medication' | 'vaccine' | 'vet';
@@ -117,6 +162,47 @@ export interface SitterLink {
   created_at: string;
 }
 
+export type SupplyKind = 'food' | 'treats' | 'litter' | 'medication' | 'other';
+
+/** Food, litter, meds: when the current one was opened and when to order more. */
+export interface Supply {
+  id: string;
+  household_id: string;
+  name: string;
+  kind: SupplyKind;
+  /** Empty means it's shared by every pet. */
+  pet_ids: string[];
+  opened_on: string;
+  /** About how many days one lasts. */
+  lasts_days: number;
+  /** Order this many days before it runs out. */
+  lead_days: number;
+  /** Set when someone ordered more; cleared when a new one is opened. */
+  ordered_on: string | null;
+  /** Earlier opened_on dates, oldest first. */
+  restocks: string[];
+  order_url: string | null;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export type PlaceKind = 'route' | 'park' | 'bag_spot' | 'other';
+export type LatLng = [number, number];
+
+/** A saved walk route, park, poop bag spot, or other place on the walk map. */
+export interface Place {
+  id: string;
+  household_id: string;
+  kind: PlaceKind;
+  name: string;
+  notes: string | null;
+  /** [latitude, longitude] pairs; one pair for a spot. */
+  points: LatLng[];
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface Snapshot {
   household: Household;
   members: Member[];
@@ -125,6 +211,10 @@ export interface Snapshot {
   logs: TaskLog[];
   weights: Weight[];
   sitterLinks: SitterLink[];
+  supplies: Supply[];
+  places: Place[];
+  /** True when the database is missing the newest update (supplies and places can't be saved). */
+  behind?: boolean;
 }
 
 /** What a sitter's link shows: today's tasks for the pets on the link. */
@@ -136,9 +226,18 @@ export interface SitterSnapshot {
   pets: Pet[];
   routines: Routine[];
   logs: TaskLog[];
+  places: Pick<Place, 'id' | 'kind' | 'name' | 'notes' | 'points'>[];
 }
 
-export type PetInput = Pick<Pet, 'name' | 'species' | 'emoji' | 'notes' | 'photo'>;
+export type PetInput = Omit<Pet, 'id' | 'household_id' | 'created_at'>;
+
+export type SupplyInput = Pick<
+  Supply,
+  'name' | 'kind' | 'pet_ids' | 'opened_on' | 'lasts_days' | 'lead_days' | 'order_url' | 'notes'
+>;
+export type SupplyPatch = Partial<SupplyInput & Pick<Supply, 'ordered_on' | 'restocks'>>;
+
+export type PlaceInput = Pick<Place, 'kind' | 'name' | 'notes' | 'points'>;
 
 export type RoutineInput = Pick<
   Routine,
@@ -173,6 +272,8 @@ export interface CompleteInput {
   note?: string | null;
   status?: LogStatus;
   snoozedTo?: string | null;
+  /** When it happened, for things logged after the fact. Defaults to now. */
+  doneAt?: string;
 }
 
 export type LogPatch = Partial<
@@ -206,6 +307,8 @@ export interface Backend {
   createHousehold(name: string): Promise<Household>;
   joinHousehold(code: string): Promise<Household>;
   loadSnapshot(householdId: string, sinceDate: string): Promise<Snapshot>;
+  /** Check-offs for older days (from and to inclusive), for the calendar and history. */
+  loadLogs(householdId: string, fromDate: string, toDate: string): Promise<TaskLog[]>;
   subscribe(householdId: string, onChange: (e: ChangeEvent) => void): () => void;
 
   renameHousehold(householdId: string, name: string): Promise<void>;
@@ -215,7 +318,10 @@ export interface Backend {
   leaveHousehold(householdId: string): Promise<void>;
   deleteHousehold(householdId: string): Promise<void>;
   updateMyProfile(householdId: string, displayName: string, color: string): Promise<void>;
-  updateMyReminders(householdId: string, prefs: Partial<Pick<Member, 'notify_late' | 'notify_daily'>>): Promise<void>;
+  updateMyReminders(
+    householdId: string,
+    prefs: Partial<Pick<Member, 'notify_late' | 'notify_daily' | 'notify_supplies'>>,
+  ): Promise<void>;
 
   addPet(householdId: string, input: PetInput): Promise<Pet>;
   updatePet(id: string, input: PetInput): Promise<void>;
@@ -233,6 +339,14 @@ export interface Backend {
 
   addWeight(householdId: string, input: WeightInput): Promise<Weight>;
   deleteWeight(id: string): Promise<void>;
+
+  addSupply(householdId: string, input: SupplyInput): Promise<Supply>;
+  updateSupply(id: string, patch: SupplyPatch): Promise<void>;
+  deleteSupply(id: string): Promise<void>;
+
+  addPlace(householdId: string, input: PlaceInput): Promise<Place>;
+  updatePlace(id: string, input: Partial<PlaceInput>): Promise<void>;
+  deletePlace(id: string): Promise<void>;
 
   createSitterLink(householdId: string, input: SitterLinkInput): Promise<SitterLink>;
   revokeSitterLink(id: string): Promise<void>;

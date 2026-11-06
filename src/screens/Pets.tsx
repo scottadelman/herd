@@ -1,68 +1,97 @@
-import { useMemo, useRef, useState, type FormEvent } from 'react';
-import { daysBetween, formatShortDate, todayISO, weekdayShort } from '../lib/dates';
+import { useState } from 'react';
+import { daysBetween, formatShortDate, todayISO } from '../lib/dates';
 import { firstName, memberById } from '../lib/people';
-import { CATEGORIES, EMOJI_CHOICES, ROUTINE_TEMPLATES, SPECIES, defaultEmoji, speciesLabel, type Template } from '../lib/pets';
-import { photoToDataUrl } from '../lib/photo';
+import { ageText, petSubtitle, sexText, telHref } from '../lib/profile';
 import { describeSchedule } from '../lib/schedule';
-import type { Category, Pet, PetInput, Routine, RoutineInput, ScheduleKind, Species, Weight } from '../lib/types';
+import type { Category, Pet, Routine, Weight } from '../lib/types';
+import { CareSheetButton } from '../parts/CareSheetButton';
+import { PetDropdown, PetQuickInfo, type PetSection } from '../parts/PetInfo';
+import { SupplySection } from '../parts/Supplies';
+import { PetSheet } from '../sheets/PetSheet';
+import { RoutineSheet } from '../sheets/RoutineSheet';
+import { WeightSheet } from '../sheets/WeightSheet';
 import { useApp } from '../state';
-import { CategoryMark, Chips, Field, Icons, PetAvatar, Sheet } from '../ui';
+import { CategoryMark, Icons, PetAvatar } from '../ui';
 
-export function PetsScreen() {
-  const { snapshot } = useApp();
-  const [openPetId, setOpenPetId] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+export function PetsScreen({ openPetId, setOpenPetId }: { openPetId: string | null; setOpenPetId: (id: string | null) => void }) {
+  const { snapshot, openAdd, openMap } = useApp();
   const openPet = snapshot.pets.find((p) => p.id === openPetId);
 
   if (openPet) return <PetDetail pet={openPet} onBack={() => setOpenPetId(null)} />;
+
+  const routes = snapshot.places.filter((p) => p.kind === 'route');
+  const spots = snapshot.places.length - routes.length;
 
   return (
     <>
       <header className="screen-head screen-head-row">
         <h1 className="screen-title">Pets</h1>
-        <button className="btn btn-primary btn-small" onClick={() => setAdding(true)}>
+        <button className="btn btn-primary btn-small" onClick={() => openAdd({ kind: 'pet' })}>
           Add pet
         </button>
       </header>
       {snapshot.pets.length === 0 ? (
         <div className="empty">
           <p>No pets yet. Add one and you’ll get suggested routines to start from.</p>
-          <button className="btn btn-primary" onClick={() => setAdding(true)}>
+          <button className="btn btn-primary" onClick={() => openAdd({ kind: 'pet' })}>
             Add your first pet
           </button>
         </div>
       ) : (
-        <ul className="list">
-          {snapshot.pets.map((p) => {
-            const rs = snapshot.routines.filter((r) => r.pet_id === p.id && r.active);
-            const meds = rs.filter((r) => r.category === 'medication').length;
-            const parts = [speciesLabel(p.species), rs.length === 1 ? '1 routine' : `${rs.length} routines`];
-            if (meds) parts.push(meds === 1 ? '1 medication' : `${meds} medications`);
-            return (
-              <li key={p.id}>
-                <button className="row row-button" onClick={() => setOpenPetId(p.id)}>
-                  <PetAvatar emoji={p.emoji} photo={p.photo} size="lg" />
+        <>
+          <section className="group">
+            <div className="list">
+              {snapshot.pets.map((p) => (
+                <PetDropdown key={p.id} pet={p} routines={snapshot.routines} onOpen={() => setOpenPetId(p.id)}>
+                  <button className="btn btn-quiet btn-small" onClick={() => setOpenPetId(p.id)}>
+                    Full profile
+                  </button>
+                  <CareSheetButton pets={[p]} />
+                </PetDropdown>
+              ))}
+            </div>
+            <p className="footnote">Tap the arrow for feeding, allergies and the vet. Tap a name for everything else.</p>
+          </section>
+
+          <SupplySection />
+
+          <section className="group">
+            <h2 className="group-label">Walks</h2>
+            <ul className="list">
+              <li>
+                <button className="row row-button" onClick={openMap}>
+                  <span className="add-mark">{Icons.map}</span>
                   <span className="row-text">
-                    <span className="row-title row-title-lg">{p.name}</span>
-                    <span className="row-meta">{parts.join(', ')}</span>
+                    <span className="row-title">Walk map</span>
+                    <span className="row-meta">
+                      {snapshot.places.length
+                        ? [
+                            routes.length ? `${routes.length} ${routes.length === 1 ? 'route' : 'routes'}` : '',
+                            spots ? `${spots} saved ${spots === 1 ? 'spot' : 'spots'}` : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' and ') + ', plus public poop bag spots'
+                        : 'Save your usual routes and parks, and find public poop bag spots'}
+                    </span>
                   </span>
                   <span className="chev" aria-hidden="true">
                     {Icons.next}
                   </span>
                 </button>
               </li>
-            );
-          })}
-        </ul>
-      )}
-      {adding && (
-        <PetSheet
-          onClose={() => setAdding(false)}
-          onSaved={(id) => {
-            setAdding(false);
-            setOpenPetId(id);
-          }}
-        />
+            </ul>
+          </section>
+
+          <section className="group">
+            <h2 className="group-label">Care sheets</h2>
+            <div className="panel stack-tight">
+              <p className="muted small">
+                A printable PDF with feeding, allergies, routines, medications and the vet, for a sitter, boarding or the fridge.
+              </p>
+              <CareSheetButton pets={snapshot.pets}>{snapshot.pets.length === 1 ? 'Make the care sheet' : 'All pets in one PDF'}</CareSheetButton>
+            </div>
+          </section>
+        </>
       )}
     </>
   );
@@ -75,12 +104,15 @@ const SECTIONS: { title: string; categories: Category[]; add: string; preset: Ca
 ];
 
 function PetDetail({ pet, onBack }: { pet: Pet; onBack: () => void }) {
-  const { snapshot } = useApp();
-  const [editingPet, setEditingPet] = useState(false);
+  const { snapshot, openMap } = useApp();
+  const [editing, setEditing] = useState<{ focus?: PetSection } | null>(null);
   const [routineSheet, setRoutineSheet] = useState<{ routine: Routine | null; preset: Category } | null>(null);
   const [weighing, setWeighing] = useState(false);
   const routines = snapshot.routines.filter((r) => r.pet_id === pet.id);
   const weights = snapshot.weights.filter((w) => w.pet_id === pet.id).sort((a, b) => a.weighed_on.localeCompare(b.weighed_on));
+  const today = todayISO();
+  const age = ageText(pet.birthday, today);
+  const sex = sexText(pet);
 
   return (
     <>
@@ -93,29 +125,72 @@ function PetDetail({ pet, onBack }: { pet: Pet; onBack: () => void }) {
           <PetAvatar emoji={pet.emoji} photo={pet.photo} size="xl" />
           <div>
             <h1 className="screen-title">{pet.name}</h1>
-            <p className="muted">{speciesLabel(pet.species)}</p>
+            <p className="muted">{petSubtitle(pet, today)}</p>
           </div>
-          <button className="btn btn-quiet btn-small" onClick={() => setEditingPet(true)}>
+          <button className="btn btn-quiet btn-small" onClick={() => setEditing({})}>
             Edit
           </button>
         </div>
-        {pet.notes && <p className="pet-notes">{pet.notes}</p>}
+        <div className="quick-actions">
+          <CareSheetButton pets={[pet]} />
+          <button className="btn btn-quiet btn-small" onClick={openMap}>
+            {Icons.map}
+            Walk map
+          </button>
+          {pet.vet_phone && (
+            <a className="btn btn-quiet btn-small" href={telHref(pet.vet_phone)}>
+              {Icons.phone}
+              Call the vet
+            </a>
+          )}
+        </div>
       </header>
+
+      <section className="group">
+        <div className="group-head">
+          <h2 className="group-label">Profile</h2>
+          <button className="btn-text" onClick={() => setEditing({ focus: 'feeding' })}>
+            Edit profile
+          </button>
+        </div>
+        <div className="panel">
+          <PetQuickInfo pet={pet} routines={snapshot.routines} onEdit={(focus) => setEditing({ focus })} />
+        </div>
+        {(pet.breed || age || sex || pet.microchip) && (
+          <dl className="facts facts-gap">
+            {pet.breed && (
+              <div>
+                <dt>Breed</dt>
+                <dd>{pet.breed}</dd>
+              </div>
+            )}
+            {age && (
+              <div>
+                <dt>Age</dt>
+                <dd>
+                  {age}
+                  {pet.birthday ? <span className="muted">, born {formatShortDate(pet.birthday)}, {pet.birthday.slice(0, 4)}</span> : null}
+                </dd>
+              </div>
+            )}
+            {sex && (
+              <div>
+                <dt>Sex</dt>
+                <dd>{sex}</dd>
+              </div>
+            )}
+            {pet.microchip && (
+              <div>
+                <dt>Microchip</dt>
+                <dd className="mono-num">{pet.microchip}</dd>
+              </div>
+            )}
+          </dl>
+        )}
+      </section>
 
       {SECTIONS.map((sec) => {
         const list = routines.filter((r) => sec.categories.includes(r.category));
-        if (sec.preset !== 'care' && !list.length) {
-          return (
-            <section key={sec.title} className="group">
-              <div className="group-head">
-                <h2 className="group-label">{sec.title}</h2>
-                <button className="btn-text" onClick={() => setRoutineSheet({ routine: null, preset: sec.preset })}>
-                  {sec.add}
-                </button>
-              </div>
-            </section>
-          );
-        }
         return (
           <section key={sec.title} className="group">
             <div className="group-head">
@@ -125,9 +200,11 @@ function PetDetail({ pet, onBack }: { pet: Pet; onBack: () => void }) {
               </button>
             </div>
             {list.length === 0 ? (
-              <div className="empty empty-inline">
-                <p>No routines for {pet.name} yet.</p>
-              </div>
+              sec.preset === 'care' ? (
+                <div className="empty empty-inline">
+                  <p>No routines for {pet.name} yet.</p>
+                </div>
+              ) : null
             ) : (
               <ul className="list">
                 {list.map((r) => (
@@ -139,6 +216,8 @@ function PetDetail({ pet, onBack }: { pet: Pet; onBack: () => void }) {
         );
       })}
 
+      <SupplySection petId={pet.id} title={`${pet.name}’s food and supplies`} />
+
       <section className="group">
         <div className="group-head">
           <h2 className="group-label">Weight</h2>
@@ -149,7 +228,9 @@ function PetDetail({ pet, onBack }: { pet: Pet; onBack: () => void }) {
         {weights.length > 0 && <WeightPanel weights={weights} />}
       </section>
 
-      {editingPet && <PetSheet pet={pet} onClose={() => setEditingPet(false)} onDeleted={onBack} onSaved={() => setEditingPet(false)} />}
+      {editing && (
+        <PetSheet pet={pet} focus={editing.focus} onClose={() => setEditing(null)} onDeleted={onBack} onSaved={() => setEditing(null)} />
+      )}
       {routineSheet && (
         <RoutineSheet pet={pet} routine={routineSheet.routine} preset={routineSheet.preset} onClose={() => setRoutineSheet(null)} />
       )}
@@ -309,579 +390,5 @@ function WeightChart({ weights }: { weights: Weight[] }) {
         {formatShortDate(weights[active].weighed_on)}
       </div>
     </div>
-  );
-}
-
-function WeightSheet({ pet, last, onClose }: { pet: Pet; last?: Weight; onClose: () => void }) {
-  const { backend, snapshot, run } = useApp();
-  const [weight, setWeight] = useState('');
-  const [unit, setUnit] = useState<'lb' | 'kg'>(last?.unit ?? 'lb');
-  const [date, setDate] = useState(todayISO());
-  const [note, setNote] = useState('');
-  const n = Number(weight);
-  const valid = weight.trim() !== '' && n > 0 && n < 5000;
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    if (!valid) return;
-    const ok = await run(
-      () => backend.addWeight(snapshot.household.id, { pet_id: pet.id, weight: n, unit, weighed_on: date, note: note.trim() || null }).then(() => true),
-      'Weight saved',
-    );
-    if (ok) onClose();
-  }
-
-  return (
-    <Sheet
-      title={`Log ${pet.name}’s weight`}
-      onClose={onClose}
-      footer={
-        <button className="btn btn-primary btn-block" form="weight-form" disabled={!valid}>
-          Save weight
-        </button>
-      }
-    >
-      <form id="weight-form" className="stack" onSubmit={save}>
-        <div className="field-pair">
-          <Field label="Weight">
-            <input
-              id="weight-value"
-              type="number"
-              inputMode="decimal"
-              step="0.1"
-              min="0.1"
-              value={weight}
-              onChange={(e) => setWeight(e.target.value)}
-              placeholder={last ? fmt(last.weight) : ''}
-              autoFocus
-            />
-          </Field>
-          <div className="field">
-            <span className="field-label">Unit</span>
-            <Chips<'lb' | 'kg'> label="Unit" value={unit} onChange={setUnit} options={[{ value: 'lb', label: 'lb' }, { value: 'kg', label: 'kg' }]} />
-          </div>
-        </div>
-        <Field label="Date">
-          <input id="weight-date" type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} required />
-        </Field>
-        <Field label="Note">
-          <input id="weight-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder="At the vet, after a bath…" />
-        </Field>
-      </form>
-    </Sheet>
-  );
-}
-
-/* ---------- Add / edit a pet ---------- */
-
-interface CustomTask {
-  title: string;
-  time: string;
-}
-
-function PetSheet({
-  pet,
-  onClose,
-  onSaved,
-  onDeleted,
-}: {
-  pet?: Pet;
-  onClose: () => void;
-  onSaved: (id: string) => void;
-  onDeleted?: () => void;
-}) {
-  const { backend, snapshot, run } = useApp();
-  const [name, setName] = useState(pet?.name ?? '');
-  const [species, setSpecies] = useState<Species>(pet?.species ?? 'dog');
-  const [emoji, setEmoji] = useState(pet?.emoji ?? defaultEmoji('dog'));
-  const [photo, setPhoto] = useState<string | null>(pet?.photo ?? null);
-  const [photoError, setPhotoError] = useState<string | null>(null);
-  const [notes, setNotes] = useState(pet?.notes ?? '');
-  const [picked, setPicked] = useState<Set<number>>(() => new Set(ROUTINE_TEMPLATES.dog.map((_, i) => i)));
-  const [custom, setCustom] = useState<CustomTask[]>([]);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const templates = ROUTINE_TEMPLATES[species];
-  const hid = snapshot.household.id;
-  const today = todayISO();
-
-  function chooseSpecies(s: Species) {
-    if (emoji === defaultEmoji(species)) setEmoji(defaultEmoji(s));
-    setSpecies(s);
-    setPicked(new Set(ROUTINE_TEMPLATES[s].map((_, i) => i)));
-  }
-
-  async function onFile(file: File | undefined) {
-    if (!file) return;
-    setPhotoError(null);
-    try {
-      setPhoto(await photoToDataUrl(file));
-    } catch (e) {
-      setPhotoError((e as Error).message);
-    }
-  }
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    const input: PetInput = { name: name.trim(), species, emoji, notes: notes.trim() || null, photo };
-    const id = await run(async () => {
-      if (pet) {
-        await backend.updatePet(pet.id, input);
-        return pet.id;
-      }
-      const created = await backend.addPet(hid, input);
-      const chosen: Template[] = [...picked].sort().map((i) => templates[i]);
-      for (const c of custom) {
-        if (!c.title.trim()) continue;
-        chosen.push({
-          title: c.title.trim().slice(0, 60),
-          kind: 'daily',
-          category: 'care',
-          dose: null,
-          times: c.time ? [c.time] : [],
-          weekdays: [],
-          interval_days: null,
-        });
-      }
-      for (const t of chosen) {
-        await backend.addRoutine(hid, { ...t, pet_id: created.id, start_date: today, assignee: null, notes: null });
-      }
-      return created.id;
-    }, pet ? 'Saved' : `Added ${input.name}`);
-    setBusy(false);
-    if (id) onSaved(id);
-  }
-
-  async function remove() {
-    if (!pet) return;
-    setBusy(true);
-    const ok = await run(() => backend.deletePet(pet.id).then(() => true), `Removed ${pet.name}`);
-    setBusy(false);
-    if (ok) {
-      onClose();
-      onDeleted?.();
-    }
-  }
-
-  return (
-    <Sheet
-      title={pet ? `Edit ${pet.name}` : 'Add a pet'}
-      onClose={onClose}
-      footer={
-        <button className="btn btn-primary btn-block" form="pet-form" disabled={busy || !name.trim()}>
-          {pet ? 'Save changes' : name.trim() ? `Add ${name.trim()}` : 'Add pet'}
-        </button>
-      }
-    >
-      <form id="pet-form" className="stack" onSubmit={save}>
-        <div className="photo-pick">
-          <PetAvatar emoji={emoji} photo={photo} size="xl" />
-          <div className="stack-tight">
-            <button type="button" className="btn btn-quiet btn-small" onClick={() => fileRef.current?.click()}>
-              {Icons.camera}
-              {photo ? 'Change photo' : 'Add a photo'}
-            </button>
-            {photo && (
-              <button type="button" className="btn-text btn-text-small" onClick={() => setPhoto(null)}>
-                Remove photo
-              </button>
-            )}
-            <input
-              ref={fileRef}
-              id="pet-photo"
-              type="file"
-              accept="image/*"
-              hidden
-              onChange={(e) => {
-                onFile(e.target.files?.[0]);
-                e.target.value = '';
-              }}
-            />
-          </div>
-        </div>
-        {photoError && <p className="form-error">{photoError}</p>}
-
-        <Field label="Name">
-          <input id="pet-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={40} autoFocus={!pet} />
-        </Field>
-        <div className="field">
-          <span className="field-label">Kind of pet</span>
-          <Chips<Species>
-            label="Kind of pet"
-            value={species}
-            onChange={chooseSpecies}
-            options={SPECIES.map((s) => ({ value: s.key, label: s.label }))}
-          />
-        </div>
-        {!photo && (
-          <div className="field">
-            <span className="field-label">Icon</span>
-            <div className="emoji-grid" role="radiogroup" aria-label="Icon">
-              {EMOJI_CHOICES.map((e) => (
-                <button
-                  type="button"
-                  key={e}
-                  role="radio"
-                  aria-checked={emoji === e}
-                  className={`emoji-choice${emoji === e ? ' emoji-on' : ''}`}
-                  onClick={() => setEmoji(e)}
-                >
-                  {e}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {!pet && (
-          <fieldset className="field templates">
-            <legend className="field-label">Start with these routines</legend>
-            <span className="field-hint">
-              Uncheck any you don’t need, or add your own. You can change times, assign people, and add medications later.
-            </span>
-            {templates.map((t, i) => (
-              <label key={t.title} className="check-row">
-                <input
-                  type="checkbox"
-                  checked={picked.has(i)}
-                  onChange={(e) => {
-                    const next = new Set(picked);
-                    if (e.target.checked) next.add(i);
-                    else next.delete(i);
-                    setPicked(next);
-                  }}
-                />
-                <span>
-                  {t.title}
-                  <span className="muted">
-                    {' '}
-                    {describeSchedule({ ...(t as Routine), start_date: today, active: true }).replace(/, due today$/, '')}
-                  </span>
-                </span>
-              </label>
-            ))}
-            {custom.map((c, i) => (
-              <div className="custom-task" key={i}>
-                <input
-                  id={`custom-title-${i}`}
-                  value={c.title}
-                  onChange={(e) => setCustom(custom.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))}
-                  maxLength={60}
-                  placeholder="Task name"
-                  aria-label={`Your task ${i + 1}`}
-                  autoFocus={!c.title}
-                />
-                <input
-                  id={`custom-time-${i}`}
-                  type="time"
-                  value={c.time}
-                  onChange={(e) => setCustom(custom.map((x, j) => (j === i ? { ...x, time: e.target.value } : x)))}
-                  aria-label={`Time for your task ${i + 1}`}
-                />
-                <button type="button" className="icon-btn" onClick={() => setCustom(custom.filter((_, j) => j !== i))} aria-label="Remove this task">
-                  {Icons.close}
-                </button>
-              </div>
-            ))}
-            <button type="button" className="btn-text" onClick={() => setCustom([...custom, { title: '', time: '' }])}>
-              Add your own task
-            </button>
-            {custom.length > 0 && <span className="field-hint">Your tasks repeat every day. Leave the time empty for “any time”.</span>}
-          </fieldset>
-        )}
-
-        <Field label="Notes" hint="Feeding amounts, allergies, the vet’s number. Everyone in the household and any sitter sees this.">
-          <textarea id="pet-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} maxLength={1000} />
-        </Field>
-
-        {pet &&
-          (confirmDelete ? (
-            <div className="danger-zone">
-              <p>Remove {pet.name} and all of {pet.name}’s routines, weights and history? This can’t be undone.</p>
-              <div className="btn-pair">
-                <button type="button" className="btn btn-quiet" onClick={() => setConfirmDelete(false)}>
-                  Keep {pet.name}
-                </button>
-                <button type="button" className="btn btn-danger" onClick={remove} disabled={busy}>
-                  Remove {pet.name}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className="btn-text btn-text-danger" onClick={() => setConfirmDelete(true)}>
-              Remove {pet.name}
-            </button>
-          ))}
-      </form>
-    </Sheet>
-  );
-}
-
-/* ---------- Add / edit a routine ---------- */
-
-const KIND_OPTIONS: { value: ScheduleKind; label: string }[] = [
-  { value: 'daily', label: 'Every day' },
-  { value: 'weekly', label: 'Some days' },
-  { value: 'interval', label: 'Every few days' },
-  { value: 'once', label: 'One time' },
-];
-
-const PLACEHOLDERS: Record<Category, string> = {
-  care: 'Breakfast, evening walk, brush teeth…',
-  medication: 'Heartworm chewable, thyroid pill…',
-  vaccine: 'Rabies, distemper, bordetella…',
-  vet: 'Annual checkup, dental cleaning…',
-};
-
-function RoutineSheet({
-  pet,
-  routine,
-  preset,
-  onClose,
-}: {
-  pet: Pet;
-  routine: Routine | null;
-  preset: Category;
-  onClose: () => void;
-}) {
-  const { backend, snapshot, run } = useApp();
-  const today = todayISO();
-  const startKind: ScheduleKind = routine?.kind ?? (preset === 'vaccine' || preset === 'vet' ? 'once' : 'daily');
-  const [category, setCategory] = useState<Category>(routine?.category ?? preset);
-  const [title, setTitle] = useState(routine?.title ?? '');
-  const [dose, setDose] = useState(routine?.dose ?? '');
-  const [kind, setKind] = useState<ScheduleKind>(startKind);
-  const [times, setTimes] = useState<string[]>(
-    routine?.times ?? (preset === 'vaccine' ? [] : preset === 'vet' ? ['10:00'] : ['08:00']),
-  );
-  const [weekdays, setWeekdays] = useState<number[]>(routine?.weekdays.length ? routine.weekdays : [1, 3, 5]);
-  const [intervalDays, setIntervalDays] = useState<number>(routine?.interval_days ?? (preset === 'vaccine' ? 365 : 7));
-  const [startDate, setStartDate] = useState(routine?.start_date ?? today);
-  const [assignee, setAssignee] = useState<string>(routine?.assignee ?? '');
-  const [notes, setNotes] = useState(routine?.notes ?? '');
-  const [active, setActive] = useState(routine?.active ?? true);
-  const [busy, setBusy] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const dateLabel = useMemo(() => {
-    if (kind === 'interval') return 'Next one is due';
-    if (category === 'vet') return 'Appointment date';
-    if (category === 'vaccine') return 'Due date';
-    return 'Date';
-  }, [kind, category]);
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    if (kind === 'weekly' && weekdays.length === 0) return;
-    setBusy(true);
-    const input: RoutineInput = {
-      pet_id: pet.id,
-      title: title.trim(),
-      kind,
-      category,
-      dose: category === 'medication' ? dose.trim() || null : null,
-      times: [...new Set(times.filter(Boolean))].sort(),
-      weekdays: kind === 'weekly' ? [...weekdays].sort() : [],
-      interval_days: kind === 'interval' ? Math.max(1, Math.min(365, intervalDays || 1)) : null,
-      // Editing a daily or weekly routine keeps its start date; for one-time
-      // and "every few days", the date is what you pick.
-      start_date: kind === 'interval' || kind === 'once' ? startDate : routine?.start_date ?? today,
-      assignee: assignee || null,
-      notes: notes.trim() || null,
-    };
-    const ok = await run(async () => {
-      if (routine) await backend.updateRoutine(routine.id, { ...input, active });
-      else await backend.addRoutine(snapshot.household.id, input);
-      return true;
-    }, routine ? 'Saved' : `Added ${input.title}`);
-    setBusy(false);
-    if (ok) onClose();
-  }
-
-  async function remove() {
-    if (!routine) return;
-    setBusy(true);
-    const ok = await run(() => backend.deleteRoutine(routine.id).then(() => true), `Deleted ${routine.title}`);
-    setBusy(false);
-    if (ok) onClose();
-  }
-
-  const noun = category === 'care' ? 'routine' : category === 'vet' ? 'vet visit' : category;
-
-  return (
-    <Sheet
-      title={routine ? `Edit ${routine.title}` : `New ${noun} for ${pet.name}`}
-      onClose={onClose}
-      footer={
-        <button
-          className="btn btn-primary btn-block"
-          form="routine-form"
-          disabled={busy || !title.trim() || (kind === 'weekly' && weekdays.length === 0)}
-        >
-          {routine ? 'Save changes' : `Add ${noun}`}
-        </button>
-      }
-    >
-      <form id="routine-form" className="stack" onSubmit={save}>
-        <div className="field">
-          <span className="field-label">Type</span>
-          <Chips<Category>
-            label="Type"
-            value={category}
-            onChange={(c) => {
-              setCategory(c);
-              if (!routine && (c === 'vaccine' || c === 'vet') && kind === 'daily') {
-                setKind('once');
-                setTimes(c === 'vet' ? ['10:00'] : []);
-              }
-            }}
-            options={CATEGORIES.map((c) => ({ value: c.key, label: c.label }))}
-          />
-        </div>
-
-        <Field label={category === 'vet' ? 'What’s the visit for' : 'What needs doing'}>
-          <input id="routine-title" value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={60} placeholder={PLACEHOLDERS[category]} autoFocus={!routine} />
-        </Field>
-
-        {category === 'medication' && (
-          <Field label="Dose" hint="Shown on Today so whoever gives it gets it right.">
-            <input id="routine-dose" value={dose} onChange={(e) => setDose(e.target.value)} maxLength={80} placeholder="1 tablet, 25 mg, with food…" />
-          </Field>
-        )}
-
-        <div className="field">
-          <span className="field-label">How often</span>
-          <Chips<ScheduleKind> label="How often" value={kind} onChange={setKind} options={KIND_OPTIONS} />
-        </div>
-
-        {kind === 'weekly' && (
-          <div className="field">
-            <span className="field-label">On these days</span>
-            <div className="weekday-row" role="group" aria-label="Days of the week">
-              {[0, 1, 2, 3, 4, 5, 6].map((d) => (
-                <button
-                  type="button"
-                  key={d}
-                  aria-pressed={weekdays.includes(d)}
-                  className={`weekday${weekdays.includes(d) ? ' weekday-on' : ''}`}
-                  onClick={() => setWeekdays(weekdays.includes(d) ? weekdays.filter((x) => x !== d) : [...weekdays, d])}
-                >
-                  {weekdayShort(d).slice(0, 2)}
-                </button>
-              ))}
-            </div>
-            {weekdays.length === 0 && <span className="field-hint late">Pick at least one day.</span>}
-          </div>
-        )}
-
-        {kind === 'interval' && (
-          <div className="field-pair">
-            <Field label="Every how many days">
-              <input
-                id="routine-interval"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={365}
-                value={intervalDays}
-                onChange={(e) => setIntervalDays(Number(e.target.value))}
-              />
-            </Field>
-            <Field label={dateLabel}>
-              <input id="routine-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
-            </Field>
-          </div>
-        )}
-
-        {kind === 'once' && (
-          <Field label={dateLabel}>
-            <input id="routine-once" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
-          </Field>
-        )}
-
-        <div className="field">
-          <span className="field-label">Time of day</span>
-          {times.length === 0 ? (
-            <p className="muted small">Any time of day</p>
-          ) : (
-            times.map((t, i) => (
-              <div className="time-row" key={i}>
-                <input
-                  id={`routine-time-${i}`}
-                  type="time"
-                  value={t}
-                  aria-label={`Time ${i + 1}`}
-                  onChange={(e) => setTimes(times.map((x, j) => (j === i ? e.target.value : x)))}
-                  required
-                />
-                <button type="button" className="btn-text" onClick={() => setTimes(times.filter((_, j) => j !== i))}>
-                  Remove
-                </button>
-              </div>
-            ))
-          )}
-          <button
-            type="button"
-            className="btn-text"
-            onClick={() => setTimes([...times, times.length ? '18:00' : '08:00'])}
-            disabled={times.length >= 12}
-          >
-            {times.length ? 'Add another time' : 'Set a time'}
-          </button>
-        </div>
-
-        <div className="field">
-          <span className="field-label">Whose job is it</span>
-          <Chips<string>
-            label="Whose job is it"
-            value={assignee}
-            onChange={setAssignee}
-            options={[{ value: '', label: 'Anyone' }, ...snapshot.members.map((m) => ({ value: m.user_id, label: firstName(m.display_name) }))]}
-          />
-        </div>
-
-        <Field label="Notes">
-          <textarea
-            id="routine-notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={2}
-            maxLength={500}
-            placeholder={category === 'vet' ? 'Clinic, what to bring, questions to ask' : 'Half a cup, mixed with water'}
-          />
-        </Field>
-
-        {routine && (
-          <label className="check-row">
-            <input type="checkbox" checked={!active} onChange={(e) => setActive(!e.target.checked)} />
-            <span>
-              Pause this {noun}
-              <span className="muted"> It won’t show up on Today until you turn it back on.</span>
-            </span>
-          </label>
-        )}
-
-        {routine &&
-          (confirmDelete ? (
-            <div className="danger-zone">
-              <p>Delete {routine.title}? Past check-offs stay in Activity.</p>
-              <div className="btn-pair">
-                <button type="button" className="btn btn-quiet" onClick={() => setConfirmDelete(false)}>
-                  Keep it
-                </button>
-                <button type="button" className="btn btn-danger" onClick={remove} disabled={busy}>
-                  Delete
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className="btn-text btn-text-danger" onClick={() => setConfirmDelete(true)}>
-              Delete {noun}
-            </button>
-          ))}
-      </form>
-    </Sheet>
   );
 }

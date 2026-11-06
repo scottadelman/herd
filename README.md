@@ -5,14 +5,18 @@ pet routines, checks things off with one tap, and sees who did what, live.
 Nobody double-feeds the dog.
 
 - **Accounts and households.** Sign up, start a household, invite people with a link or code. Belong to more than one household and switch between them.
-- **Pets.** Any kind of pet, with a photo. Starter routines for each species, plus your own tasks from the first screen.
+- **Pets.** Any kind of pet (type your own for "Other"), with a photo or any emoji. Starter routines for each species, plus your own tasks from the first screen.
+- **Pet profiles.** Breed, birthday, sex, microchip, feeding instructions and amounts, allergies, likes and dislikes ("hates golden retrievers"), and the primary vet with tap-to-call. Every pet has a dropdown with the feeding and allergy details on Today, Pets, and the sitter page.
 - **Routines.** Every day, certain days, every few days, or one time. Times, an assigned person, and notes.
 - **Health.** Medications with doses, vaccines, vet visits, and a weight log with a trend chart.
-- **Today.** A checklist built from everyone's routines. Look ahead to tomorrow or any day. Skip a task, snooze it a day, add a note, or fix the time on a check-off.
-- **Calendar.** A month view of medications, vaccines, vet visits and other scheduled tasks, with what's coming up.
-- **Activity.** Two weeks of history and a "last 7 days" count of who did what.
+- **Today (home).** A checklist built from everyone's routines, in the middle of the tab bar. Look ahead or back to any day. Skip a task, snooze it a day, add a note, or fix the time on a check-off. The + button adds a task, appointment, log entry, supply or pet from anywhere.
+- **Calendar.** A month view of medications, vaccines, vet visits and other scheduled tasks, with what's coming up. Add something on any day, and look back at what happened on past days (who did what, and anything missed).
+- **Activity.** Full history, a month at a time, and a "last 7 days" count of who did what. Everyone who joins sees the same history.
+- **Food and supplies.** Track a bag of food, litter or meds and Herd says when to order more, before it runs out. "I ordered it" so nobody orders twice, and it learns how long a bag really lasts.
+- **Walk map.** Save usual routes (draw them, or record one while you walk), parks and poop bag spots, plus public bag dispensers and dog parks from OpenStreetMap.
+- **Care sheets.** A PDF per pet with feeding, allergies, routines, medications, what's coming up and the vet, to text to a sitter or stick on the fridge.
 - **Sitter links.** A no-account link for a walker or sitter that shows only today's tasks for the pets you pick, and stops working on a date you choose.
-- **Reminders.** Push notifications when a task is 30 minutes late, and an optional morning summary.
+- **Reminders.** Push notifications when a task is 30 minutes late, when it's time to order food, and an optional morning summary.
 - **Demo mode.** Works with no setup, so you can try it before connecting anything.
 
 Built with React, TypeScript and Vite. Data, accounts and live updates come from
@@ -24,6 +28,12 @@ Built with React, TypeScript and Vite. Data, accounts and live updates come from
 
 Already running Herd? Each update that changes the database comes with a numbered
 file in `supabase/migrations`. Run each new one once, in order.
+
+**Update 003** (pet profiles, food reminders, walk map):
+
+1. **Database.** Open `supabase/migrations/003_profiles_supplies_places.sql` in Notepad, select all, and copy. In Supabase, open **SQL Editor**, click **New query**, paste, and click **Run**. You should see "Success. No rows returned".
+2. **Reminder code** (for the "time to order food" alerts). In Supabase, open **Edge Functions**, then your reminder function (`clever-api`), then its **Code** tab. Open `supabase/functions/send-reminders/index.ts` in Notepad, select all, copy, replace everything in the editor with it, and deploy. Leave its settings and name as they are. Skipping this step only means no reorder alerts yet; everything else works.
+3. **Push the app.** Double-click `ship.cmd`. GitHub redeploys in about 2 minutes. Everyone closes Herd and opens it again to get the new version.
 
 **Update 002** (photos, health, sitter links, reminders, skip and snooze):
 
@@ -106,7 +116,7 @@ everyone, run `select cron.unschedule('herd-reminders');` in the SQL Editor.
 In **Household > Sitter links**, tap **New sitter link**, enter who it's for, pick
 the pets and how long it lasts, then share it by text. The sitter:
 
-- sees today's tasks for those pets, the pet notes, and who already did what
+- sees today's tasks for those pets, each pet's feeding, allergies, likes and dislikes and vet, the walk map, and who already did what
 - checks things off without an account (their check-offs show as "Maria (sitter)")
 - can't see the calendar, history, other pets, your household's people, or the invite code
 
@@ -125,7 +135,7 @@ You need [Node.js](https://nodejs.org) 20 or newer.
 ```
 npm install
 npm run dev             # local dev server, http://localhost:5173
-npm test                # schedule, skip/snooze and reminder rules
+npm test                # schedule, skip/snooze, reminder, supply, profile and map rules
 npm run test:schema     # rebuilds schema.sql, runs it in an in-memory Postgres, checks the security rules
 npm run build           # production build into dist/
 npm run build:function  # rebuilds supabase/functions/send-reminders/index.ts from its src files
@@ -148,7 +158,12 @@ Without real values in `public/config.js`, the app runs in demo-only mode.
 | `src/lib/schedule.ts` | When routines are due and how they're described |
 | `src/lib/day.ts` | One day's tasks after skips and snoozes |
 | `src/state.tsx` | Loading, live sync, and optimistic check-offs |
-| `src/screens/` | Today, Calendar, Pets, Activity, Household, Sitter, sign-in and setup |
+| `src/screens/` | Today, Calendar, Pets, Activity, Household, Sitter, the walk map, sign-in and setup |
+| `src/sheets/` | Forms used from more than one screen: add a pet, routine, log entry, weight, and the Add menu |
+| `src/parts/` | Pieces shared by screens: pet dropdowns, food and supplies, the care sheet button |
+| `src/lib/supplies.ts` | When to order more, and learning how long a bag lasts |
+| `src/lib/careSheet.ts` | The PDF care sheet |
+| `src/lib/publicSpots.ts` | Public poop bag spots and dog parks from OpenStreetMap |
 | `public/` | `config.js`, icons, home screen manifest, service worker (offline + notifications) |
 
 ### How "nobody double-feeds the dog" works
@@ -161,5 +176,6 @@ the next day, so finishing it there can also only happen once.
 
 ## What's next
 
+- **SOS button** that finds the nearest open emergency vet.
 - **Kids' schedules** for babysitters, using the same routines and sitter links.
 - **App Store version** by wrapping this same code once the idea is proven. Apple will also require in-app account deletion and a privacy policy page.
