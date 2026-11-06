@@ -21,7 +21,7 @@ Nobody double-feeds the dog.
 - **Demo mode.** Works with no setup, so you can try it before connecting anything.
 
 Built with React, TypeScript and Vite. Data, accounts and live updates come from
-[Supabase](https://supabase.com) (the free tier is plenty). Hosted free on GitHub Pages.
+[Supabase](https://supabase.com) (the free tier is plenty). Hosted free on Cloudflare or GitHub Pages.
 
 ---
 
@@ -33,13 +33,13 @@ file in `supabase/migrations`. Run each new one once, in order.
 **Update 004** (every month and every-few schedules, account photo and phone, deleting your account, editing check-off days):
 
 1. **Database.** Open `supabase/migrations/004_schedules_accounts.sql` in Notepad, select all, and copy. In Supabase, open **SQL Editor**, click **New query**, paste, and click **Run**. You should see "Success. No rows returned". It only adds things; nothing existing is removed.
-2. **Reminder code (do this one).** In Supabase, open **Edge Functions**, then your reminder function (`clever-api`), then its **Code** tab. Open `supabase/functions/send-reminders/index.ts` in Notepad, select all, copy, replace everything in the editor with it, and deploy. Leave its name and settings as they are. The old code doesn't know the new "every month" schedule, so skipping this would pause reminders once anyone uses it.
+2. **Reminder code (do this one).** In Supabase, open **Edge Functions**, then `send-reminders`, then its **Code** tab. Open `supabase/functions/send-reminders/index.ts` in Notepad, select all, copy, replace everything in the editor with it, and deploy. Leave its name and settings as they are. The old code doesn't know the new "every month" schedule, so skipping this would pause reminders once anyone uses it.
 3. **Push the app.** Double-click `ship.cmd`. Everyone closes Herd and opens it again.
 
 **Update 003** (pet profiles, food reminders, walk map):
 
 1. **Database.** Open `supabase/migrations/003_profiles_supplies_places.sql` in Notepad, select all, and copy. In Supabase, open **SQL Editor**, click **New query**, paste, and click **Run**. You should see "Success. No rows returned".
-2. **Reminder code** (for the "time to order food" alerts). In Supabase, open **Edge Functions**, then your reminder function (`clever-api`), then its **Code** tab. Open `supabase/functions/send-reminders/index.ts` in Notepad, select all, copy, replace everything in the editor with it, and deploy. Leave its settings and name as they are. Skipping this step only means no reorder alerts yet; everything else works.
+2. **Reminder code** (for the "time to order food" alerts). In Supabase, open **Edge Functions**, then `send-reminders`, then its **Code** tab. Open `supabase/functions/send-reminders/index.ts` in Notepad, select all, copy, replace everything in the editor with it, and deploy. Leave its settings and name as they are. Skipping this step only means no reorder alerts yet; everything else works.
 3. **Push the app.** Double-click `ship.cmd`. GitHub redeploys in about 2 minutes. Everyone closes Herd and opens it again to get the new version.
 
 **Update 002** (photos, health, sitter links, reminders, skip and snooze):
@@ -52,6 +52,14 @@ Run the database step before or at the same time as pushing the code. The new ap
 shows a message asking for the update if the database is behind.
 
 Then, to get reminders, follow **Turn on reminders** below.
+
+**If your reminder function has a different name** (Supabase may have named it something like `clever-api`), move it to `send-reminders` so the steps here match. Reminders keep running the whole time:
+
+1. In Supabase, open **Edge Functions > Deploy a new function > Via Editor**. Name it `send-reminders`, paste all of `supabase/functions/send-reminders/index.ts`, and deploy.
+2. Open its **Settings**, turn off **Verify JWT with legacy secret**, and save.
+3. In **SQL Editor**, run all of `supabase/enable-reminders.sql`. This moves the 5-minute schedule to the new name.
+4. Wait 5 minutes. **Edge Functions > send-reminders > Logs** should show a run with status 200.
+5. Then delete the old function (its menu > **Delete function**). Nothing in the database changes.
 
 ---
 
@@ -82,7 +90,7 @@ The repo is public because GitHub Pages is free for public repos. Nothing secret
 
 1. In Supabase, click **Connect** at the top of the project and copy the **Project URL**. Then open **Project Settings > API Keys** and copy the **publishable key**.
 2. Open `public/config.js` in Notepad on your PC, paste both values in, save, and double-click `ship.cmd`.
-3. In Supabase, open **Authentication > URL Configuration**. Set **Site URL** to your GitHub Pages URL and add the same URL under **Redirect URLs**.
+3. In Supabase, open **Authentication > URL Configuration**. Set **Site URL** to your GitHub Pages URL (or your own domain, below) and add the same URL under **Redirect URLs**.
 4. If you deploy to a different Supabase project later, also change the project URL inside `supabase/enable-reminders.sql`.
 
 The publishable key is meant to be public. The rules in the database decide who can
@@ -94,6 +102,19 @@ another's data.
 1. Open your GitHub Pages URL in Safari on your iPhone, create an account, and start a household.
 2. Tap **Share > Add to Home Screen**. It now opens like an app.
 3. Go to the **Household** tab and tap **Share invite link**. Whoever opens it signs up and lands in your household.
+
+### 5. Host it on Cloudflare with your own domain (optional)
+
+Cloudflare hosting is free, has no bandwidth cap, and allows paid apps. `wrangler.jsonc` holds its settings. You keep pushing with `ship.cmd`; Cloudflare deploys each push to main.
+
+1. **Connect the repo.** Sign up at cloudflare.com (Free plan). Open **Workers & Pages > Create application**, choose **GitHub**, allow it to see the `herd` repo, and pick it. Keep the name `herd`. Build command: `npm test && npm run build`. Deploy command: `npx wrangler deploy`. Click **Deploy**, then open the `workers.dev` address it gives you and sign in to check it.
+2. **Add the domain to Cloudflare.** Open **Domains > Onboard a domain**, enter it, choose **Free**, and let it scan the existing records. Delete the records Squarespace made for its website (A records on the root, and the `www` CNAME). Keep any email records (MX, TXT). Copy the two nameservers Cloudflare shows.
+3. **Point Squarespace at Cloudflare.** In Squarespace, open the domain. If **DNSSEC** is on, turn it off first. Then open **Domain Nameservers > Use custom nameservers**, enter the two Cloudflare nameservers exactly, and save. Wait for Cloudflare to email you that the domain is **Active** (minutes to a day).
+4. **Attach the domain.** In **Workers & Pages > herd > Settings > Domains & Routes**, click **Add > Custom Domain** and enter the domain. Cloudflare makes the DNS record and the HTTPS certificate. Under the domain's **SSL/TLS > Edge Certificates**, turn on **Always Use HTTPS**.
+5. **Tell Supabase.** In **Authentication > URL Configuration**, set **Site URL** to `https://yourdomain.com` and add `https://yourdomain.com/**` under **Redirect URLs**. Keep the old URL there too.
+6. **Move everyone over.** Sign-ins and reminders belong to the web address, so each person deletes the old Home Screen icon, opens the new address in Safari, adds it to the Home Screen, signs in, and turns reminders back on. Their households, pets and history don't change.
+
+The app needs no code changes for a new address: invite links, sitter links and sign-in emails all use whatever address it's opened from.
 
 ---
 

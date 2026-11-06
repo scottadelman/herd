@@ -1,0 +1,11 @@
+// Cloudflare hosting settings. Cloudflare builds the app with `npm run build`
+// on every push to main, then serves the dist folder. The name must match the
+// Worker's name in the Cloudflare dashboard.
+{
+  "name": "herd",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+}

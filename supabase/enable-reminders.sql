@@ -1,6 +1,6 @@
 -- Turns on Herd's reminders: every 5 minutes, call the reminder function
--- (deployed in Supabase as "clever-api"), which sends any late-task and
--- morning-summary notifications.
+-- (deployed in Supabase as "send-reminders"), which sends any late-task,
+-- reorder and morning-summary notifications.
 --
 -- Run this in Supabase > SQL Editor AFTER the function is deployed
 -- (README: "Turn on reminders"). Running it again is safe: it replaces the
@@ -17,7 +17,7 @@ select cron.schedule(
   '*/5 * * * *',
   $$
   select net.http_post(
-    url := 'https://wruemcfxvqjpfusryykc.supabase.co/functions/v1/clever-api',
+    url := 'https://wruemcfxvqjpfusryykc.supabase.co/functions/v1/send-reminders',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'x-herd-cron', (select value from public.app_secrets where key = 'cron_secret')
