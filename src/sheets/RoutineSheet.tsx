@@ -1,26 +1,51 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { todayISO, weekdayShort } from '../lib/dates';
+import { dayPhrase, daysBetween, formatClock, formatDayLabel, localDayOf, todayISO, weekdayOf, weekdayShort } from '../lib/dates';
 import { firstName } from '../lib/people';
 import { CATEGORIES } from '../lib/pets';
-import type { Category, Pet, Routine, RoutineInput, ScheduleKind } from '../lib/types';
-import { useApp } from '../state';
+import { describeSchedule, ordinal } from '../lib/schedule';
+import type { Category, Pet, Routine, RoutineInput, ScheduleKind, TaskLog } from '../lib/types';
+import { useApp, whoDid } from '../state';
 import { Chips, Field, Sheet } from '../ui';
+import { CheckoffSheet } from './CheckoffSheet';
 
-/* ---------- Add / edit a routine ---------- */
+/** How often, in plain words. "Every few…" covers every 3 days, 2 weeks, 3 months and so on. */
+type Freq = 'once' | 'daily' | 'weekly' | 'monthly' | 'custom';
+type Unit = 'days' | 'weeks' | 'months';
 
-const KIND_OPTIONS: { value: ScheduleKind; label: string }[] = [
-  { value: 'daily', label: 'Every day' },
-  { value: 'weekly', label: 'Some days' },
-  { value: 'interval', label: 'Every few days' },
+const FREQ_OPTIONS: { value: Freq; label: string }[] = [
   { value: 'once', label: 'One time' },
+  { value: 'daily', label: 'Every day' },
+  { value: 'weekly', label: 'Every week' },
+  { value: 'monthly', label: 'Every month' },
+  { value: 'custom', label: 'Every few…' },
 ];
+
+const UNIT_MAX: Record<Unit, number> = { days: 365, weeks: 52, months: 12 };
 
 const PLACEHOLDERS: Record<Category, string> = {
   care: 'Breakfast, evening walk, grooming appointment…',
-  medication: 'Heartworm chewable, thyroid pill…',
+  medication: 'Heartworm chewable, flea and tick chew…',
   vaccine: 'Rabies, distemper, bordetella…',
   vet: 'Annual checkup, dental cleaning…',
 };
+
+function freqOf(r: Routine): { freq: Freq; unit: Unit; n: number } {
+  const every = Math.max(1, r.repeat_every ?? 1);
+  switch (r.kind) {
+    case 'once':
+      return { freq: 'once', unit: 'days', n: 2 };
+    case 'daily':
+      return { freq: 'daily', unit: 'days', n: 2 };
+    case 'weekly':
+      return every > 1 ? { freq: 'custom', unit: 'weeks', n: every } : { freq: 'weekly', unit: 'weeks', n: 2 };
+    case 'monthly':
+      return every > 1 ? { freq: 'custom', unit: 'months', n: every } : { freq: 'monthly', unit: 'months', n: 3 };
+    case 'interval':
+      return { freq: 'custom', unit: 'days', n: r.interval_days ?? 2 };
+    default:
+      return { freq: 'daily', unit: 'days', n: 2 };
+  }
+}
 
 /**
  * Add or edit a routine, medication, vaccine, vet visit or one-time task.
@@ -44,52 +69,104 @@ export function RoutineSheet({
   presetKind?: ScheduleKind;
   onClose: () => void;
 }) {
-  const { backend, snapshot, run } = useApp();
+  const { backend, snapshot, logs, run, me } = useApp();
   const today = todayISO();
   const [petId, setPetId] = useState(fixedPet?.id ?? routine?.pet_id ?? snapshot.pets[0]?.id ?? '');
   const pet = fixedPet ?? snapshot.pets.find((p) => p.id === petId);
-  const startKind: ScheduleKind =
-    routine?.kind ?? presetKind ?? (preset === 'vaccine' || preset === 'vet' || presetDate ? 'once' : 'daily');
+  const start = routine
+    ? freqOf(routine)
+    : {
+        freq: (presetKind === 'once' || presetKind === 'daily'
+          ? presetKind
+          : preset === 'vaccine' || preset === 'vet' || presetDate
+            ? 'once'
+            : 'daily') as Freq,
+        unit: (preset === 'vaccine' ? 'months' : 'weeks') as Unit,
+        n: preset === 'vaccine' ? 12 : 2,
+      };
   const [category, setCategory] = useState<Category>(routine?.category ?? preset);
   const [title, setTitle] = useState(routine?.title ?? '');
   const [dose, setDose] = useState(routine?.dose ?? '');
-  const [kind, setKind] = useState<ScheduleKind>(startKind);
+  const [freq, setFreq] = useState<Freq>(start.freq);
+  const [unit, setUnit] = useState<Unit>(start.unit);
+  const [n, setN] = useState<number>(start.n);
   const [times, setTimes] = useState<string[]>(
     routine?.times ?? (preset === 'vaccine' ? [] : preset === 'vet' ? ['10:00'] : ['08:00']),
   );
-  const [weekdays, setWeekdays] = useState<number[]>(routine?.weekdays.length ? routine.weekdays : [1, 3, 5]);
-  const [intervalDays, setIntervalDays] = useState<number>(routine?.interval_days ?? (preset === 'vaccine' ? 365 : 7));
   const [startDate, setStartDate] = useState(routine?.start_date ?? presetDate ?? today);
+  const [weekdays, setWeekdays] = useState<number[]>(
+    routine?.weekdays.length ? routine.weekdays : [weekdayOf(routine?.start_date ?? presetDate ?? today)],
+  );
   const [assignee, setAssignee] = useState<string>(routine?.assignee ?? '');
   const [notes, setNotes] = useState(routine?.notes ?? '');
   const [active, setActive] = useState(routine?.active ?? true);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editingLog, setEditingLog] = useState<TaskLog | null>(null);
 
-  const dateLabel = useMemo(() => {
-    if (kind === 'interval') return 'Next one is due';
-    if (category === 'vet') return 'Appointment date';
-    if (category === 'vaccine') return 'Due date';
-    return 'Date';
-  }, [kind, category]);
+  const usesWeekdays = freq === 'weekly' || (freq === 'custom' && unit === 'weeks');
+  const usesDate = freq === 'once' || freq === 'monthly' || freq === 'custom';
+  const count = Math.max(1, Math.min(UNIT_MAX[unit], Math.round(n) || 1));
+
+  /** The schedule part of the routine, from what's picked above. */
+  const schedule = useMemo((): Pick<RoutineInput, 'kind' | 'weekdays' | 'interval_days' | 'repeat_every' | 'start_date'> => {
+    // Every day and every week keep the routine's original start, so past days still show it.
+    const keepStart = routine && routine.start_date <= today ? routine.start_date : today;
+    const days = [...weekdays].sort();
+    switch (freq) {
+      case 'once':
+        return { kind: 'once', weekdays: [], interval_days: null, repeat_every: 1, start_date: startDate };
+      case 'daily':
+        return { kind: 'daily', weekdays: [], interval_days: null, repeat_every: 1, start_date: keepStart };
+      case 'weekly':
+        return { kind: 'weekly', weekdays: days, interval_days: null, repeat_every: 1, start_date: keepStart };
+      case 'monthly':
+        return { kind: 'monthly', weekdays: [], interval_days: null, repeat_every: 1, start_date: startDate };
+      case 'custom':
+        if (unit === 'days') return { kind: 'interval', weekdays: [], interval_days: count, repeat_every: 1, start_date: startDate };
+        if (unit === 'weeks') return { kind: 'weekly', weekdays: days, interval_days: null, repeat_every: count, start_date: startDate };
+        return { kind: 'monthly', weekdays: [], interval_days: null, repeat_every: count, start_date: startDate };
+    }
+  }, [freq, unit, count, weekdays, startDate, routine, today]);
+
+  const sortedTimes = [...new Set(times.filter(Boolean))].sort();
+  const preview = describeSchedule({ ...(routine ?? ({} as Routine)), ...schedule, times: sortedTimes, active: true } as Routine, today);
+  const invalid = usesWeekdays && weekdays.length === 0;
+
+  const dateLabel =
+    freq === 'once'
+      ? category === 'vet'
+        ? 'Appointment date'
+        : category === 'vaccine'
+          ? 'Due date'
+          : 'Date'
+      : startDate < today && routine
+        ? 'Started'
+        : 'First one is on';
+
+  // Recent check-offs of this routine, so a wrong time can be fixed right here.
+  const recent = useMemo(
+    () =>
+      routine
+        ? logs
+            .filter((l) => l.routine_id === routine.id && l.status !== 'snoozed')
+            .sort((a, b) => b.done_at.localeCompare(a.done_at))
+            .slice(0, 5)
+        : [],
+    [logs, routine],
+  );
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    if (kind === 'weekly' && weekdays.length === 0) return;
-    if (!pet) return;
+    if (invalid || !pet) return;
     setBusy(true);
     const input: RoutineInput = {
       pet_id: pet.id,
       title: title.trim(),
-      kind,
       category,
       dose: category === 'medication' ? dose.trim() || null : null,
-      times: [...new Set(times.filter(Boolean))].sort(),
-      weekdays: kind === 'weekly' ? [...weekdays].sort() : [],
-      interval_days: kind === 'interval' ? Math.max(1, Math.min(365, intervalDays || 1)) : null,
-      // Editing a daily or weekly routine keeps its start date; for one-time
-      // and "every few days", the date is what you pick.
-      start_date: kind === 'interval' || kind === 'once' ? startDate : routine?.start_date ?? today,
+      times: sortedTimes,
+      ...schedule,
       assignee: assignee || null,
       notes: notes.trim() || null,
     };
@@ -110,18 +187,14 @@ export function RoutineSheet({
     if (ok) onClose();
   }
 
-  const noun = category === 'care' ? (kind === 'once' ? 'task' : 'routine') : category === 'vet' ? 'vet visit' : category;
+  const noun = category === 'care' ? (freq === 'once' ? 'task' : 'routine') : category === 'vet' ? 'vet visit' : category;
 
   return (
     <Sheet
       title={routine ? `Edit ${routine.title}` : fixedPet ? `New ${noun} for ${fixedPet.name}` : `New ${noun}`}
       onClose={onClose}
       footer={
-        <button
-          className="btn btn-primary btn-block"
-          form="routine-form"
-          disabled={busy || !pet || !title.trim() || (kind === 'weekly' && weekdays.length === 0)}
-        >
+        <button className="btn btn-primary btn-block" form="routine-form" disabled={busy || !pet || !title.trim() || invalid}>
           {routine ? 'Save changes' : `Add ${noun}`}
         </button>
       }
@@ -145,8 +218,8 @@ export function RoutineSheet({
             value={category}
             onChange={(c) => {
               setCategory(c);
-              if (!routine && (c === 'vaccine' || c === 'vet') && kind === 'daily') {
-                setKind('once');
+              if (!routine && (c === 'vaccine' || c === 'vet') && freq === 'daily') {
+                setFreq('once');
                 setTimes(c === 'vet' ? ['10:00'] : []);
               }
             }}
@@ -166,12 +239,40 @@ export function RoutineSheet({
 
         <div className="field">
           <span className="field-label">How often</span>
-          <Chips<ScheduleKind> label="How often" value={kind} onChange={setKind} options={KIND_OPTIONS} />
+          <Chips<Freq> label="How often" value={freq} onChange={setFreq} options={FREQ_OPTIONS} />
         </div>
 
-        {kind === 'weekly' && (
+        {freq === 'custom' && (
           <div className="field">
-            <span className="field-label">On these days</span>
+            <span className="field-label">Repeat every</span>
+            <div className="every-row">
+              <input
+                id="routine-every"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={UNIT_MAX[unit]}
+                value={Number.isFinite(n) ? n : ''}
+                onChange={(e) => setN(Number(e.target.value))}
+                aria-label="How many"
+              />
+              <Chips<Unit>
+                label="Days, weeks or months"
+                value={unit}
+                onChange={setUnit}
+                options={[
+                  { value: 'days', label: 'days' },
+                  { value: 'weeks', label: 'weeks' },
+                  { value: 'months', label: 'months' },
+                ]}
+              />
+            </div>
+          </div>
+        )}
+
+        {usesWeekdays && (
+          <div className="field">
+            <span className="field-label">{freq === 'weekly' ? 'On' : 'On these days'}</span>
             <div className="weekday-row" role="group" aria-label="Days of the week">
               {[0, 1, 2, 3, 4, 5, 6].map((d) => (
                 <button
@@ -185,32 +286,24 @@ export function RoutineSheet({
                 </button>
               ))}
             </div>
-            {weekdays.length === 0 && <span className="field-hint late">Pick at least one day.</span>}
+            {weekdays.length === 0 ? (
+              <span className="field-hint late">Pick at least one day.</span>
+            ) : (
+              <span className="field-hint">Pick more than one for things like weekday walks.</span>
+            )}
           </div>
         )}
 
-        {kind === 'interval' && (
-          <div className="field-pair">
-            <Field label="Every how many days">
-              <input
-                id="routine-interval"
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={365}
-                value={intervalDays}
-                onChange={(e) => setIntervalDays(Number(e.target.value))}
-              />
-            </Field>
-            <Field label={dateLabel}>
-              <input id="routine-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
-            </Field>
-          </div>
-        )}
-
-        {kind === 'once' && (
-          <Field label={dateLabel}>
-            <input id="routine-once" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
+        {usesDate && (
+          <Field
+            label={dateLabel}
+            hint={
+              freq === 'monthly' || (freq === 'custom' && unit === 'months')
+                ? `Repeats on the ${ordinal(Number(startDate.slice(8, 10)))}${Number(startDate.slice(8, 10)) > 28 ? ', or the last day of shorter months' : ''}.`
+                : undefined
+            }
+          >
+            <input id="routine-date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value || today)} required />
           </Field>
         )}
 
@@ -245,6 +338,8 @@ export function RoutineSheet({
           </button>
         </div>
 
+        {!invalid && <p className="schedule-preview">{preview}</p>}
+
         <div className="field">
           <span className="field-label">Whose job is it</span>
           <Chips<string>
@@ -265,6 +360,30 @@ export function RoutineSheet({
             placeholder={category === 'vet' ? 'Clinic, what to bring, questions to ask' : 'Half a cup, mixed with water'}
           />
         </Field>
+
+        {recent.length > 0 && (
+          <div className="field">
+            <span className="field-label">{category === 'medication' ? 'Recent doses' : 'Recent check-offs'}</span>
+            <ul className="list list-inset">
+              {recent.map((l) => (
+                <li key={l.id}>
+                  <button type="button" className="row row-button row-compact" onClick={() => setEditingLog(l)}>
+                    <span className="row-text">
+                      <span className="row-title">
+                        {formatDayLabel(localDayOf(l.done_at), today)} at {formatClock(l.done_at)}
+                      </span>
+                      <span className="row-meta">
+                        {l.status === 'skipped' ? 'Skipped' : 'Done'} by {whoDid(l, snapshot.members, me.user_id)}
+                        {daysBetween(l.occurrence_date, localDayOf(l.done_at)) !== 0 ? `, for ${dayPhrase(l.occurrence_date, today)}` : ''}
+                      </span>
+                    </span>
+                    <span className="row-edit">Change</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {routine && (
           <label className="check-row">
@@ -295,6 +414,7 @@ export function RoutineSheet({
             </button>
           ))}
       </form>
+      {editingLog && <CheckoffSheet log={editingLog} onClose={() => setEditingLog(null)} />}
     </Sheet>
   );
 }

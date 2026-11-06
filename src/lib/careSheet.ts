@@ -13,7 +13,7 @@ export interface CareSheetInput {
   householdName: string;
   pets: Pet[];
   routines: Routine[];
-  members: Pick<Member, 'display_name'>[];
+  members: (Pick<Member, 'display_name'> & { phone?: string | null })[];
   places: Pick<Place, 'kind' | 'name' | 'notes' | 'points'>[];
   today?: string;
 }
@@ -213,8 +213,10 @@ export async function makeCareSheet(input: CareSheetInput): Promise<Blob> {
     }
 
     if (input.members.length) {
-      heading('Household');
-      text(input.members.map((m) => m.display_name).join(', '), { color: MUTED });
+      heading('Household', input.members.length);
+      for (const m of input.members.filter((x) => x.phone)) fact(m.display_name, m.phone);
+      const noPhone = input.members.filter((x) => !x.phone).map((x) => x.display_name);
+      if (noPhone.length) text(noPhone.join(', '), { color: MUTED });
     }
   });
 

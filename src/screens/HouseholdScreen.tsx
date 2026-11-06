@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { dayPhrase, formatTime, toISODate } from '../lib/dates';
-import { MEMBER_COLORS } from '../lib/people';
 import { currentSubscription, disablePush, enablePush, pushSupport } from '../lib/push';
 import type { Member, SitterLink } from '../lib/types';
 import { useApp } from '../state';
-import { Chips, Field, PetAvatar, Sheet, Stamp, useToast } from '../ui';
+import { telHref } from '../lib/profile';
+import { AccountSheet, Avatar } from '../sheets/AccountSheet';
+import { Chips, Field, Icons, PetAvatar, Sheet, useToast } from '../ui';
 
 function linkWith(param: string, value: string): string {
   const url = new URL(window.location.href);
@@ -31,7 +32,7 @@ async function shareOrCopy(title: string, text: string, url: string, toast: (t: 
 }
 
 export function HouseholdScreen() {
-  const { backend, session, snapshot, me, run, onLeftHousehold, exitDemo, households, switchHousehold, addHousehold } = useApp();
+  const { backend, snapshot, me, run, onLeftHousehold, exitDemo, households, switchHousehold, addHousehold } = useApp();
   const toast = useToast();
   const { household, members } = snapshot;
   const isOwner = me.role === 'owner';
@@ -39,8 +40,7 @@ export function HouseholdScreen() {
   const [renaming, setRenaming] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [name, setName] = useState(me.display_name);
-  const [color, setColor] = useState(me.color);
+  const [accountOpen, setAccountOpen] = useState(false);
   const code = household.invite_code;
   const prettyCode = `${code.slice(0, 4)} ${code.slice(4)}`;
 
@@ -53,12 +53,6 @@ export function HouseholdScreen() {
     }
   }
 
-  async function saveProfile(e: FormEvent) {
-    e.preventDefault();
-    await run(() => backend.updateMyProfile(household.id, name.trim(), color), 'Saved');
-  }
-
-  const profileChanged = name.trim() !== me.display_name || color !== me.color;
 
   return (
     <>
@@ -100,23 +94,42 @@ export function HouseholdScreen() {
       <section className="group">
         <h2 className="group-label">People</h2>
         <ul className="list">
-          {members.map((m) => (
-            <li key={m.user_id} className="row">
-              <Stamp name={m.display_name} color={m.color} size="sm" />
-              <div className="row-text">
-                <span className="row-title">
-                  {m.display_name}
-                  {m.user_id === me.user_id ? ' (you)' : ''}
-                </span>
-                <span className="row-meta">{m.role === 'owner' ? 'Owner' : 'Member'}</span>
-              </div>
-              {isOwner && m.user_id !== me.user_id && (
-                <button className="btn-text" onClick={() => setRemoving(m)}>
-                  Remove
+          {members.map((m) =>
+            m.user_id === me.user_id ? (
+              <li key={m.user_id}>
+                <button className="row row-button" onClick={() => setAccountOpen(true)} aria-label="Your account">
+                  <Avatar name={m.display_name} color={m.color} photo={m.avatar} size="sm" />
+                  <span className="row-text">
+                    <span className="row-title">{m.display_name} (you)</span>
+                    <span className="row-meta">{m.role === 'owner' ? 'Owner' : 'Member'}. Your photo, phone and account</span>
+                  </span>
+                  <span className="chev" aria-hidden="true">
+                    {Icons.next}
+                  </span>
                 </button>
-              )}
-            </li>
-          ))}
+              </li>
+            ) : (
+              <li key={m.user_id} className="row">
+                <Avatar name={m.display_name} color={m.color} photo={m.avatar} size="sm" />
+                <div className="row-text">
+                  <span className="row-title">{m.display_name}</span>
+                  <span className="row-meta">
+                    {m.role === 'owner' ? 'Owner' : 'Member'}
+                    {m.phone && (
+                      <a className="person-phone" href={telHref(m.phone)}>
+                        {m.phone}
+                      </a>
+                    )}
+                  </span>
+                </div>
+                {isOwner && (
+                  <button className="btn-text" onClick={() => setRemoving(m)}>
+                    Remove
+                  </button>
+                )}
+              </li>
+            ),
+          )}
         </ul>
       </section>
 
@@ -164,38 +177,8 @@ export function HouseholdScreen() {
       <RemindersPanel />
 
       <section className="group">
-        <h2 className="group-label">You</h2>
-        <form className="panel stack" onSubmit={saveProfile}>
-          <Field label="Your name">
-            <input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={40} />
-          </Field>
-          <div className="field">
-            <span className="field-label">Your stamp color</span>
-            <div className="swatches" role="radiogroup" aria-label="Your stamp color">
-              {MEMBER_COLORS.map((c) => (
-                <button
-                  type="button"
-                  key={c}
-                  role="radio"
-                  aria-checked={color === c}
-                  aria-label={c}
-                  className={`swatch${color === c ? ' swatch-on' : ''}`}
-                  onClick={() => setColor(c)}
-                >
-                  <Stamp name={name || '?'} color={c} size="sm" />
-                </button>
-              ))}
-            </div>
-          </div>
-          <button className="btn btn-quiet" disabled={!profileChanged || !name.trim()}>
-            Save
-          </button>
-        </form>
-      </section>
-
-      <section className="group">
-        <h2 className="group-label">Account</h2>
-        <div className="panel stack">
+        <h2 className="group-label">This household</h2>
+        <div className="panel stack-tight">
           {isDemo ? (
             <>
               <p className="muted">You’re in the demo household. Nothing here is saved to an account.</p>
@@ -205,17 +188,16 @@ export function HouseholdScreen() {
             </>
           ) : (
             <>
-              <p className="muted">Signed in as {session.email}</p>
-              <button className="btn btn-quiet" onClick={() => backend.signOut()}>
-                Sign out
-              </button>
+              <p className="muted small">Your account settings, signing out and deleting your account are under your name in People.</p>
               <button className="btn-text btn-text-danger" onClick={() => setLeaving(true)}>
-                {isOwner ? 'Delete household' : 'Leave household'}
+                {isOwner ? `Delete ${household.name}` : `Leave ${household.name}`}
               </button>
             </>
           )}
         </div>
       </section>
+
+      {accountOpen && <AccountSheet onClose={() => setAccountOpen(false)} />}
 
       {renaming && <RenameSheet onClose={() => setRenaming(false)} />}
 

@@ -70,6 +70,7 @@ export function SitterView({ backend, token, preview = false }: { backend: Backe
 
   const done = items.filter(isResolved).length;
   const name = (log: TaskLog) => {
+    if (!log.done_by && log.author_name) return log.author_name;
     if (!log.done_by) return log.sitter_name === snap.link.label ? 'you' : `${log.sitter_name ?? 'a sitter'}`;
     return firstName(snap.members.find((m) => m.user_id === log.done_by)?.display_name ?? 'someone');
   };
@@ -202,7 +203,7 @@ export function SitterView({ backend, token, preview = false }: { backend: Backe
                       </button>
                     ) : log ? (
                       <span className="stamp-btn" aria-label={`${label}, done`}>
-                        <Stamp name={log.done_by ? name(log) : log.sitter_name ?? '?'} color={colorOf(log)} />
+                        <Stamp name={log.done_by ? name(log) : log.sitter_name ?? log.author_name ?? '?'} color={colorOf(log)} />
                       </span>
                     ) : (
                       <button className="stamp-btn" onClick={() => check(item)} aria-label={`Check off ${label}`}>

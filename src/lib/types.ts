@@ -31,6 +31,16 @@ export interface Member {
   notify_daily: string | null;
   /** A reminder when it's time to order more food or supplies. */
   notify_supplies: boolean;
+  /** Profile photo as a small JPEG data URL. */
+  avatar: string | null;
+  /** Phone number the household can see. */
+  phone: string | null;
+}
+
+export interface AccountInput {
+  display_name: string;
+  avatar: string | null;
+  phone: string | null;
 }
 
 export type Sex = 'female' | 'male';
@@ -88,7 +98,7 @@ export const EMPTY_PROFILE = {
   vet_address: null,
 } satisfies Partial<Pet>;
 
-export type ScheduleKind = 'daily' | 'weekly' | 'interval' | 'once';
+export type ScheduleKind = 'daily' | 'weekly' | 'monthly' | 'interval' | 'once';
 export type Category = 'care' | 'medication' | 'vaccine' | 'vet';
 
 export interface Routine {
@@ -106,6 +116,8 @@ export interface Routine {
   weekdays: number[];
   /** Used when kind = 'interval'. */
   interval_days: number | null;
+  /** Weekly and monthly: every this many weeks or months (1 = every one). */
+  repeat_every: number;
   /** "YYYY-MM-DD". First day it applies; the date itself for 'once'. */
   start_date: string;
   assignee: string | null;
@@ -134,6 +146,8 @@ export interface TaskLog {
   done_by: string | null;
   sitter_link_id: string | null;
   sitter_name: string | null;
+  /** The person's name, kept after they deleted their account. */
+  author_name?: string | null;
   done_at: string;
 }
 
@@ -249,6 +263,7 @@ export type RoutineInput = Pick<
   | 'times'
   | 'weekdays'
   | 'interval_days'
+  | 'repeat_every'
   | 'start_date'
   | 'assignee'
   | 'notes'
@@ -277,7 +292,10 @@ export interface CompleteInput {
 }
 
 export type LogPatch = Partial<
-  Pick<TaskLog, 'status' | 'snoozed_to' | 'done_by' | 'done_at' | 'note' | 'sitter_link_id' | 'sitter_name'>
+  Pick<
+    TaskLog,
+    'status' | 'snoozed_to' | 'done_by' | 'done_at' | 'note' | 'sitter_link_id' | 'sitter_name' | 'occurrence_date' | 'title'
+  >
 >;
 
 export type CompleteResult = { ok: true; log: TaskLog } | { ok: false; existing: TaskLog | null };
@@ -317,7 +335,12 @@ export interface Backend {
   removeMember(householdId: string, userId: string): Promise<void>;
   leaveHousehold(householdId: string): Promise<void>;
   deleteHousehold(householdId: string): Promise<void>;
-  updateMyProfile(householdId: string, displayName: string, color: string): Promise<void>;
+  /** Name, photo and phone: the same in every household. */
+  updateMyAccount(input: AccountInput): Promise<void>;
+  /** Stamp color: one per household. */
+  updateMyColor(householdId: string, color: string): Promise<void>;
+  /** Deletes the account. Check-offs stay under the person's name; owned households pass on. */
+  deleteMyAccount(): Promise<void>;
   updateMyReminders(
     householdId: string,
     prefs: Partial<Pick<Member, 'notify_late' | 'notify_daily' | 'notify_supplies'>>,

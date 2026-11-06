@@ -66,6 +66,7 @@ export function useApp(): AppState {
 /** Who did a log, in words: "Priya", "you", or "Maria (sitter)". */
 export function whoDid(log: TaskLog, members: Member[], me: string, capitalize = false): string {
   if (log.done_by === me) return capitalize ? 'You' : 'you';
+  if (!log.done_by && log.author_name) return log.author_name;
   if (!log.done_by && log.sitter_name) return `${log.sitter_name} (sitter)`;
   return firstName(memberById(members, log.done_by)?.display_name ?? 'Someone');
 }

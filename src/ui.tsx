@@ -68,6 +68,8 @@ const CATEGORY_ICONS = {
 
 /* ---------- Bottom sheet ---------- */
 
+let openSheets = 0;
+
 export function Sheet({
   title,
   onClose,
@@ -87,10 +89,13 @@ export function Sheet({
     ref.current?.focus();
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && closeRef.current();
     window.addEventListener('keydown', onKey);
+    // Sheets can open on top of sheets; keep the page still until the last one closes.
+    openSheets++;
     document.body.classList.add('sheet-open');
     return () => {
       window.removeEventListener('keydown', onKey);
-      document.body.classList.remove('sheet-open');
+      openSheets = Math.max(0, openSheets - 1);
+      if (!openSheets) document.body.classList.remove('sheet-open');
       prev?.focus?.();
     };
   }, []);

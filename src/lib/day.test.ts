@@ -25,6 +25,7 @@ const routine = (over: Partial<Routine>): Routine => ({
   times: ['18:00'],
   weekdays: [],
   interval_days: null,
+  repeat_every: 1,
   start_date: '2026-11-01',
   assignee: null,
   notes: null,

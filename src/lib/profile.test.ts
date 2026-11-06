@@ -29,6 +29,7 @@ const meal = (title: string, times: string[]): Routine => ({
   times,
   weekdays: [],
   interval_days: null,
+  repeat_every: 1,
   start_date: '2026-01-01',
   assignee: null,
   notes: null,

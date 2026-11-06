@@ -7,7 +7,6 @@ import type { Backend, Household, Session } from './lib/types';
 import { AuthScreen } from './screens/Auth';
 import { SetupForms, SetupScreen } from './screens/Setup';
 import { TodayScreen } from './screens/Today';
-import { CalendarScreen } from './screens/Calendar';
 import { PetsScreen } from './screens/Pets';
 import { ActivityScreen } from './screens/Activity';
 import { HouseholdScreen } from './screens/HouseholdScreen';
@@ -17,7 +16,7 @@ import { AddFlow } from './sheets/AddFlow';
 import { AppProvider, useHouseholdData, type AddPreset } from './state';
 import { Icons, Sheet, Spinner } from './ui';
 
-type Tab = 'today' | 'calendar' | 'pets' | 'activity' | 'household';
+type Tab = 'today' | 'pets' | 'activity' | 'household';
 const MODE_KEY = 'herd-mode';
 const CURRENT_KEY = 'herd-current-household';
 
@@ -251,10 +250,9 @@ function Shell({
     );
   }
 
-  // Today sits in the middle, as home.
+  // Today is home: the day up top, the calendar underneath.
   const tabs: { key: Tab; label: string; icon: JSX.Element }[] = [
     { key: 'pets', label: 'Pets', icon: Icons.paw },
-    { key: 'calendar', label: 'Calendar', icon: Icons.calendar },
     { key: 'today', label: 'Today', icon: Icons.home },
     { key: 'activity', label: 'Activity', icon: Icons.activity },
     { key: 'household', label: 'Household', icon: Icons.people },
@@ -314,7 +312,6 @@ function Shell({
         )}
         <main className="screen">
           {tab === 'today' && <TodayScreen />}
-          {tab === 'calendar' && <CalendarScreen />}
           {tab === 'pets' && <PetsScreen openPetId={openPetId} setOpenPetId={setOpenPetId} />}
           {tab === 'activity' && <ActivityScreen />}
           {tab === 'household' && <HouseholdScreen />}

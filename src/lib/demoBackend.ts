@@ -92,6 +92,7 @@ function seed(): DemoState {
     times,
     weekdays: [],
     interval_days: null,
+    repeat_every: 1,
     start_date: addDays(today, -HISTORY),
     assignee: null,
     notes: null,
@@ -336,8 +337,8 @@ function seed(): DemoState {
   return {
     household: { id: HID, name: 'The Parkers', invite_code: 'HXK4P9TQ', created_by: ME, timezone: null },
     members: [
-      { user_id: ME, role: 'owner', color: MEMBER_COLORS[0], display_name: 'Jamie', notify_late: true, notify_daily: '07:30', notify_supplies: true },
-      { user_id: PRIYA, role: 'member', color: MEMBER_COLORS[1], display_name: 'Priya', notify_late: true, notify_daily: null, notify_supplies: true },
+      { user_id: ME, role: 'owner', color: MEMBER_COLORS[0], display_name: 'Jamie', notify_late: true, notify_daily: '07:30', notify_supplies: true, avatar: null, phone: '(718) 555-0123' },
+      { user_id: PRIYA, role: 'member', color: MEMBER_COLORS[1], display_name: 'Priya', notify_late: true, notify_daily: null, notify_supplies: true, avatar: null, phone: '(718) 555-0167' },
     ],
     pets,
     routines,
@@ -519,9 +520,16 @@ export function createDemoBackend(): Backend {
     async deleteHousehold() {
       throw new Error('The demo household can’t be deleted. Use Exit demo instead.');
     },
-    async updateMyProfile(_hid, displayName, color) {
-      state.members = state.members.map((m) => (m.user_id === ME ? { ...m, display_name: displayName, color } : m));
+    async updateMyAccount(input) {
+      state.members = state.members.map((m) => (m.user_id === ME ? { ...m, ...input } : m));
+      commit({ table: 'profiles', type: 'UPDATE' });
+    },
+    async updateMyColor(_hid, color) {
+      state.members = state.members.map((m) => (m.user_id === ME ? { ...m, color } : m));
       commit({ table: 'household_members', type: 'UPDATE' });
+    },
+    async deleteMyAccount() {
+      throw new Error('The demo account can’t be deleted. Use Exit demo instead.');
     },
     async updateMyReminders(_hid, prefs) {
       state.members = state.members.map((m) => (m.user_id === ME ? { ...m, ...prefs } : m));

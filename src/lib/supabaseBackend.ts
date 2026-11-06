@@ -30,7 +30,7 @@ function friendly(message: string): string {
   if (/email not confirmed/i.test(message)) return 'Confirm your email first. Check your inbox for the link.';
   if (/user already registered/i.test(message)) return 'An account with that email already exists. Sign in instead.';
   if (/password should be at least/i.test(message)) return 'Use a password with at least 6 characters.';
-  if (/pets_photo_check|value too long/i.test(message)) return 'That photo is too large. Try a different one.';
+  if (/pets_photo_check|profiles_avatar_check|value too long/i.test(message)) return 'That photo is too large. Try a different one.';
   if (/row-level security/i.test(message)) return 'You can only change your own check-offs.';
   if (/could not find the function|column .* does not exist|schema cache|relation .* does not exist/i.test(message))
     return 'The database needs the latest update. Whoever set up Herd should run the newest file in supabase/migrations in the Supabase SQL Editor (see the README).';
@@ -144,7 +144,7 @@ export function createSupabaseBackend(config: AppConfig): Backend {
         sb.from('households').select('*').eq('id', householdId).single(),
         sb
           .from('household_members')
-          .select('user_id, role, color, notify_late, notify_daily, joined_at, profile:profiles(display_name)')
+          .select('*, profile:profiles(*)')
           .eq('household_id', householdId)
           .order('joined_at'),
         sb.from('pets').select('*').eq('household_id', householdId).order('created_at'),
@@ -182,6 +182,8 @@ export function createSupabaseBackend(config: AppConfig): Backend {
         notify_daily: row.notify_daily ?? null,
         notify_supplies: row.notify_supplies ?? true,
         display_name: row.profile?.display_name ?? 'Someone',
+        avatar: row.profile?.avatar ?? null,
+        phone: row.profile?.phone ?? null,
       }));
       return {
         household: h.data as Household,
@@ -278,12 +280,22 @@ export function createSupabaseBackend(config: AppConfig): Backend {
       fail(error);
     },
 
-    async updateMyProfile(householdId, displayName, color) {
+    async updateMyAccount(input) {
       const me = await uid();
-      const a = await sb.from('profiles').update({ display_name: displayName }).eq('id', me);
-      fail(a.error);
-      const b = await sb.from('household_members').update({ color }).match({ household_id: householdId, user_id: me });
-      fail(b.error);
+      const { error } = await sb.from('profiles').update(input).eq('id', me);
+      fail(error);
+    },
+
+    async updateMyColor(householdId, color) {
+      const me = await uid();
+      const { error } = await sb.from('household_members').update({ color }).match({ household_id: householdId, user_id: me });
+      fail(error);
+    },
+
+    async deleteMyAccount() {
+      const { error } = await sb.rpc('delete_my_account');
+      fail(error);
+      await sb.auth.signOut();
     },
 
     async updateMyReminders(householdId, prefs) {

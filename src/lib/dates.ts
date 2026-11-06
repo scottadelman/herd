@@ -84,3 +84,15 @@ export function formatLongDate(iso: string): string {
   const d = parseISODate(iso);
   return `${MONTH_LONG[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
+
+/** The local calendar day of a timestamp: "2026-11-05". */
+export function localDayOf(iso: string): string {
+  return toISODate(new Date(iso));
+}
+
+/** A local date and "HH:MM" time as a timestamp. */
+export function atLocal(date: string, hhmm: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  const [h, min] = hhmm.split(':').map(Number);
+  return new Date(y, m - 1, d, h, min, 0, 0).toISOString();
+}

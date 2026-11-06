@@ -38,12 +38,14 @@ export interface RRoutine {
   household_id: string;
   pet_id: string;
   title: string;
-  kind: 'daily' | 'weekly' | 'interval' | 'once';
+  kind: 'daily' | 'weekly' | 'monthly' | 'interval' | 'once';
   category: 'care' | 'medication' | 'vaccine' | 'vet';
   dose: string | null;
   times: string[];
   weekdays: number[];
   interval_days: number | null;
+  /** Weekly and monthly multiplier. Missing on databases before update 004. */
+  repeat_every?: number;
   start_date: string;
   assignee: string | null;
   active: boolean;
@@ -120,17 +122,34 @@ export function formatTime(hhmm: string): string {
 export function occurrences(r: RRoutine, date: string): string[] {
   if (!r.active || daysBetween(r.start_date, date) < 0) return [];
   const slots = r.times.length ? [...r.times].sort() : [ANY];
+  const every = Math.max(1, r.repeat_every ?? 1);
   switch (r.kind) {
     case 'daily':
       return slots;
-    case 'weekly':
-      return r.weekdays.includes(weekdayOf(date)) ? slots : [];
+    case 'weekly': {
+      if (!r.weekdays.includes(weekdayOf(date))) return [];
+      if (every === 1) return slots;
+      const sunday = (iso: string) => addDays(iso, -weekdayOf(iso));
+      const weeks = Math.round(daysBetween(sunday(r.start_date), sunday(date)) / 7);
+      return weeks % every === 0 ? slots : [];
+    }
+    case 'monthly': {
+      const [sy, sm, sd] = r.start_date.split('-').map(Number);
+      const [y, m, d] = date.split('-').map(Number);
+      const months = (y - sy) * 12 + (m - sm);
+      if (months < 0 || months % every !== 0) return [];
+      const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+      return d === Math.min(sd, last) ? slots : [];
+    }
     case 'interval': {
       const n = r.interval_days ?? 0;
       return n >= 1 && daysBetween(r.start_date, date) % n === 0 ? slots : [];
     }
     case 'once':
       return date === r.start_date ? slots : [];
+    default:
+      // A schedule this code doesn't know yet: skip it rather than stop every reminder.
+      return [];
   }
 }
 

@@ -2573,3 +2573,199 @@ a.btn-text {
   display: inline-flex;
   align-items: center;
 }
+
+/* =====================================================================
+   v0.4: one home tab, editable check-offs, schedules, account
+   ===================================================================== */
+
+/* The month under the day view */
+.cal {
+  margin-top: 8px;
+}
+
+.cal-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 6px;
+}
+
+.cal-month {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* Swiping between days */
+.day-swipe {
+  touch-action: pan-y;
+}
+
+.day-slide-next {
+  animation: day-in-next 0.22s ease both;
+}
+
+.day-slide-prev {
+  animation: day-in-prev 0.22s ease both;
+}
+
+@keyframes day-in-next {
+  from {
+    transform: translateX(28px);
+    opacity: 0;
+  }
+}
+
+@keyframes day-in-prev {
+  from {
+    transform: translateX(-28px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .day-slide-next,
+  .day-slide-prev {
+    animation: none;
+  }
+}
+
+/* "Change" on anything with an editable time */
+.row-edit {
+  flex: none;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--focus);
+  align-self: center;
+}
+
+.last-given {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 14px 12px 14px;
+  margin-top: -6px;
+  text-align: left;
+  font-size: 15px;
+  color: var(--ink-2);
+}
+
+.last-given:active {
+  background: var(--surface-2);
+}
+
+.list-inset {
+  background: var(--surface);
+}
+
+.row-compact {
+  min-height: 56px;
+  padding-block: 8px;
+}
+
+/* Schedules */
+.every-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.every-row input {
+  width: 84px !important;
+}
+
+.schedule-preview {
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 15px;
+  font-weight: 500;
+  border-left: 4px solid var(--ball);
+}
+
+/* Reorder banner with a one-tap Order button */
+.supply-alert {
+  display: flex;
+  align-items: center;
+  padding-right: 12px;
+}
+
+.supply-alert .supply-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.supply-alert .chev {
+  display: none;
+}
+
+.supply-order {
+  flex: none;
+}
+
+/* People and the account sheet */
+.person-photo {
+  flex: none;
+  display: block;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.person-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.person-photo-sm {
+  width: 34px;
+  height: 34px;
+}
+
+.person-photo-md {
+  width: 46px;
+  height: 46px;
+}
+
+.person-photo-lg {
+  width: 76px;
+  height: 76px;
+}
+
+.person-phone {
+  color: var(--focus);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.account-email {
+  font-size: 17px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.account-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.danger-list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 15px;
+  color: var(--ink-2);
+}
+
+.supply-alert .turn-alert {
+  display: none;
+}

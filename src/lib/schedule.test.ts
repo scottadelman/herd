@@ -14,6 +14,7 @@ const base: Routine = {
   times: ['07:00'],
   weekdays: [],
   interval_days: null,
+  repeat_every: 1,
   start_date: '2026-11-01',
   assignee: null,
   notes: null,
@@ -90,5 +91,39 @@ describe('periods and overdue', () => {
     expect(isOverdue('2026-11-04', 'any', now)).toBe(false);
     expect(isOverdue('2026-11-03', 'any', now)).toBe(true);
     expect(isOverdue('2026-11-05', '07:00', now)).toBe(false);
+  });
+});
+
+describe('monthly and every-few schedules', () => {
+  it('every month lands on the same day, or the last day of a short month', () => {
+    const r: Routine = { ...base, kind: 'monthly', start_date: '2026-01-31', times: [] };
+    expect(occurrencesForDate(r, '2026-01-31')).toEqual(['any']);
+    expect(occurrencesForDate(r, '2026-02-28')).toEqual(['any']);
+    expect(occurrencesForDate(r, '2026-02-27')).toEqual([]);
+    expect(occurrencesForDate(r, '2026-04-30')).toEqual(['any']);
+    expect(occurrencesForDate(r, '2026-05-31')).toEqual(['any']);
+    expect(occurrencesForDate(r, '2025-12-31')).toEqual([]);
+  });
+  it('every 3 months skips the months in between', () => {
+    const r: Routine = { ...base, kind: 'monthly', repeat_every: 3, start_date: '2026-11-15', times: ['08:00'] };
+    expect(occurrencesForDate(r, '2026-11-15')).toEqual(['08:00']);
+    expect(occurrencesForDate(r, '2026-12-15')).toEqual([]);
+    expect(occurrencesForDate(r, '2027-02-15')).toEqual(['08:00']);
+    expect(nextDueDate(r, '2026-11-16')).toBe('2027-02-15');
+    expect(describeSchedule(r, '2026-11-16')).toBe('Every 3 months on the 15th at 8:00 AM, next Feb 15');
+  });
+  it('every 2 weeks on Monday', () => {
+    // Nov 2, 2026 is a Monday
+    const r: Routine = { ...base, kind: 'weekly', weekdays: [1], repeat_every: 2, start_date: '2026-11-02', times: [] };
+    expect(occurrencesForDate(r, '2026-11-02')).toEqual(['any']);
+    expect(occurrencesForDate(r, '2026-11-09')).toEqual([]);
+    expect(occurrencesForDate(r, '2026-11-16')).toEqual(['any']);
+    expect(describeSchedule(r, '2026-11-03')).toBe('Every 2 weeks on Mon, next Nov 16');
+  });
+  it('describes simple weekly and monthly schedules', () => {
+    expect(describeSchedule({ ...base, kind: 'weekly', weekdays: [6] }, '2026-11-03')).toBe('Every Saturday at 7:00 AM');
+    expect(describeSchedule({ ...base, kind: 'monthly', start_date: '2026-11-01', times: [] }, '2026-11-03')).toBe(
+      'Every month on the 1st, next Dec 1',
+    );
   });
 });

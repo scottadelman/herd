@@ -1,18 +1,37 @@
 import type { Routine } from './types';
 import { addDays, daysBetween, formatDayLabel, formatShortDate, formatTime, minutesOf, todayISO, weekdayOf, weekdayShort } from './dates';
 
+const WEEKDAY_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const weekdayLong = (d: number) => WEEKDAY_LONG[d];
+
 export const ANY_TIME = 'any';
+
+const daysInMonth = (y: number, m1: number) => new Date(y, m1, 0).getDate();
+const sundayOf = (iso: string) => addDays(iso, -weekdayOf(iso));
 
 /** The time slots a routine is due on a given day ([] if not due). */
 export function occurrencesForDate(r: Routine, date: string): string[] {
   if (!r.active) return [];
   if (daysBetween(r.start_date, date) < 0) return [];
   const slots = r.times.length ? [...r.times].sort() : [ANY_TIME];
+  const every = Math.max(1, r.repeat_every ?? 1);
   switch (r.kind) {
     case 'daily':
       return slots;
-    case 'weekly':
-      return r.weekdays.includes(weekdayOf(date)) ? slots : [];
+    case 'weekly': {
+      if (!r.weekdays.includes(weekdayOf(date))) return [];
+      if (every === 1) return slots;
+      const weeks = Math.round(daysBetween(sundayOf(r.start_date), sundayOf(date)) / 7);
+      return weeks % every === 0 ? slots : [];
+    }
+    case 'monthly': {
+      // Same day of the month as the start date, or the month's last day if it's shorter.
+      const [sy, sm, sd] = r.start_date.split('-').map(Number);
+      const [y, m, d] = date.split('-').map(Number);
+      const months = (y - sy) * 12 + (m - sm);
+      if (months < 0 || months % every !== 0) return [];
+      return d === Math.min(sd, daysInMonth(y, m)) ? slots : [];
+    }
     case 'interval': {
       const n = r.interval_days ?? 0;
       if (n < 1) return [];
@@ -20,7 +39,15 @@ export function occurrencesForDate(r: Routine, date: string): string[] {
     }
     case 'once':
       return date === r.start_date ? slots : [];
+    default:
+      return [];
   }
+}
+
+/** "1st", "2nd", "23rd", "31st" */
+export function ordinal(n: number): string {
+  const s = n % 100 >= 11 && n % 100 <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' } as Record<number, string>)[n % 10] ?? 'th';
+  return `${n}${s}`;
 }
 
 /** Next day (from `from`, inclusive) the routine is due, or null. */
@@ -41,15 +68,26 @@ function joinWords(items: string[]): string {
 
 export function describeSchedule(r: Routine, today: string = todayISO()): string {
   const at = r.times.length ? ` at ${joinWords([...r.times].sort().map(formatTime))}` : '';
+  const every = Math.max(1, r.repeat_every ?? 1);
+  const next = () => {
+    const n = nextDueDate(r, today);
+    return n === null ? '' : n === today ? ', due today' : `, next ${formatShortDate(n)}`;
+  };
   switch (r.kind) {
     case 'daily':
       return `Every day${at}`;
     case 'weekly': {
       const days = [...r.weekdays].sort((a, b) => a - b);
+      if (every > 1) return `Every ${every} weeks on ${joinWords(days.map(weekdayShort))}${at}${next()}`;
       if (days.length === 7) return `Every day${at}`;
       if (days.join() === '1,2,3,4,5') return `Weekdays${at}`;
       if (days.join() === '0,6') return `Weekends${at}`;
+      if (days.length === 1) return `Every ${weekdayLong(days[0])}${at}`;
       return `${joinWords(days.map(weekdayShort))}${at}`;
+    }
+    case 'monthly': {
+      const day = ordinal(Number(r.start_date.slice(8, 10)));
+      return `${every === 1 ? 'Every month' : `Every ${every} months`} on the ${day}${at}${next()}`;
     }
     case 'interval': {
       const n = r.interval_days ?? 1;

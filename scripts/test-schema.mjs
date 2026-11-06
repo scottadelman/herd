@@ -339,5 +339,62 @@ check('sitter sees the walk places', view3.places.length === 2 && view3.places.s
 check('sitter still sees only the pets on the link', view3.pets.length === 1);
 await expectError('the sitter link can’t read supplies', () => asAnon(`select * from public.supplies`), /permission denied/);
 
+// ---------------------------------------------------------------------------
+// Upgrade 004: monthly schedules, profile photo and phone, deleting an account
+// ---------------------------------------------------------------------------
+console.log('\n-- upgrade 004 --');
+
+const monthly = (
+  await as(users.scott,
+    `insert into public.routines (household_id, pet_id, title, kind, category, start_date, repeat_every) values ($1, $2, 'Flea chewable', 'monthly', 'medication', '2026-11-15', 3) returning *`,
+    [h.id, pet.id])
+).rows[0];
+check('every 3 months on the 15th', monthly.kind === 'monthly' && monthly.repeat_every === 3);
+check('older routines repeat every 1', (await as(users.scott, `select repeat_every from public.routines where id = $1`, [routine.id])).rows[0].repeat_every === 1);
+
+await as(users.partner, `update public.profiles set phone = '(201) 555-0187', avatar = 'data:image/jpeg;base64,AAAA' where id = $1`, [users.partner]);
+check('people add a phone and photo to their profile', (await as(users.scott, `select phone from public.profiles where id = $1`, [users.partner])).rows[0].phone === '(201) 555-0187');
+const notMine = await as(users.scott, `update public.profiles set phone = '000' where id = $1`, [users.partner]);
+check('nobody edits someone else’s profile', notMine.affectedRows === 0);
+check('strangers can’t see the phone number', (await as(users.stranger, `select * from public.profiles where id = $1`, [users.partner])).rows.length === 0);
+
+const bath = (
+  await as(users.partner,
+    `insert into public.task_logs (household_id, pet_id, occurrence_date, slot, title, done_by) values ($1, $2, $3, 'adhoc', 'Bath', $4) returning *`,
+    [h.id, pet.id, today, users.partner])
+).rows[0];
+await as(users.partner, `update public.task_logs set occurrence_date = $1, title = 'Bath and brush', done_at = now() - interval '1 day' where id = $2`, [yesterday, bath.id]);
+check('move something logged by hand to another day', (await as(users.scott, `select occurrence_date::text as d, title from public.task_logs where id = $1`, [bath.id])).rows[0].title === 'Bath and brush');
+await expectError('a routine check-off stays on its own day', () =>
+  as(users.partner, `update public.task_logs set occurrence_date = $1 where id = $2`, [yesterday, snoozed.id]), /stays on its own day/);
+await expectError('nobody can sign a check-off with another name', () =>
+  as(users.scott,
+    `insert into public.task_logs (household_id, pet_id, occurrence_date, slot, title, done_by, author_name) values ($1, $2, $3, 'adhoc', 'x', $4, 'Partner')`,
+    [h.id, pet.id, today, users.scott]), /row-level security/);
+
+// Someone who belongs to The Den, owns a household alone, and owns one with others
+const leaver = '44444444-4444-4444-8444-444444444444';
+await db.query(`insert into auth.users (id, email, raw_user_meta_data) values ($1, 'leaver@example.com', $2)`, [leaver, { display_name: 'Lee' }]);
+const solo = (await as(leaver, `select * from public.create_household('Solo')`)).rows[0];
+const shared = (await as(leaver, `select * from public.create_household('Shared')`)).rows[0];
+await as(users.partner, `select * from public.join_household($1)`, [shared.invite_code]);
+const denCode = (await as(users.scott, `select invite_code from public.households where id = $1`, [h.id])).rows[0].invite_code;
+await as(leaver, `select * from public.join_household($1)`, [denCode]);
+const leaverLog = (
+  await as(leaver,
+    `insert into public.task_logs (household_id, pet_id, routine_id, occurrence_date, slot, title, done_by) values ($1, $2, $3, $4, '07:00', 'Breakfast', $5) returning id`,
+    [h.id, pet.id, routine.id, tomorrow, leaver])
+).rows[0];
+await as(leaver, `select public.delete_my_account()`);
+const kept = (await db.query(`select done_by, author_name from public.task_logs where id = $1`, [leaverLog.id])).rows[0];
+check('their check-offs stay in the household’s history, under their name', kept && kept.done_by === null && kept.author_name === 'Lee');
+check('the account is gone', (await db.query(`select 1 from auth.users where id = $1`, [leaver])).rows.length === 0);
+check('a household they had alone goes with them', (await db.query(`select 1 from public.households where id = $1`, [solo.id])).rows.length === 0);
+const heirRow = (await db.query(`select created_by from public.households where id = $1`, [shared.id])).rows[0];
+check('a household with others passes to the next person', heirRow?.created_by === users.partner);
+check('the next person becomes its owner', (await db.query(`select role from public.household_members where household_id = $1 and user_id = $2`, [shared.id, users.partner])).rows[0].role === 'owner');
+check('everyone else’s data is untouched', (await as(users.scott, `select count(*)::int as n from public.task_logs where household_id = $1`, [h.id])).rows[0].n > 3);
+await expectError('signed-out visitors can’t delete accounts', () => asAnon(`select public.delete_my_account()`), /permission denied/);
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exit(failures ? 1 : 0);

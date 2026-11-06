@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeSupply, openNewPatch, restockGaps, supplyFor, supplyStatus } from './supplies';
+import { describeSupply, extractUrl, openNewPatch, orderUrl, restockGaps, siteLabel, supplyFor, supplyStatus } from './supplies';
 import type { Supply } from './types';
 
 const s = (over: Partial<Supply> = {}): Supply => ({
@@ -64,4 +64,16 @@ it('says who a supply is for', () => {
   expect(supplyFor(s(), pets)).toBe('everyone');
   expect(supplyFor(s({ pet_ids: ['a', 'b'] }), pets)).toBe('Biscuit and Olive');
   expect(supplyFor(s({ pet_ids: ['a', 'b', 'c'] }), pets)).toBe('Biscuit, Olive and Kiwi');
+});
+
+describe('ordering', () => {
+  it('pulls the link out of a pasted share', () => {
+    expect(extractUrl('Check out Purina Pro Plan on Chewy! https://www.chewy.com/purina-pro-plan/dp/52463')).toBe('https://www.chewy.com/purina-pro-plan/dp/52463');
+    expect(extractUrl('chewy.com/dp/52463')).toBe('https://chewy.com/dp/52463');
+    expect(extractUrl('salmon kibble')).toBeNull();
+  });
+  it('falls back to a Chewy search for the name', () => {
+    expect(orderUrl({ name: 'Salmon kibble 30 lb', order_url: null })).toBe('https://www.chewy.com/s?query=Salmon%20kibble%2030%20lb');
+    expect(siteLabel('https://www.chewy.com/dp/1')).toBe('chewy.com');
+  });
 });

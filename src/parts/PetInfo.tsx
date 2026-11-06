@@ -13,11 +13,14 @@ export function PetQuickInfo({
   pet,
   routines,
   onEdit,
+  orderHref,
 }: {
   pet: Pet;
   routines: Routine[];
   /** Shown as "Add" links for missing parts, for people who can edit. */
   onEdit?: (section: PetSection) => void;
+  /** Where "Order more" goes for their food (left out on the sitter page). */
+  orderHref?: string | null;
 }) {
   const times = mealTimes(pet, routines);
   const empty = !hasFeeding(pet) && !times && !pet.allergies.length && !pet.likes.length && !pet.dislikes.length && !hasVet(pet);
@@ -37,6 +40,11 @@ export function PetQuickInfo({
                 </span>
               )}
               {pet.feeding_notes && <span className="muted">{pet.feeding_notes}</span>}
+              {orderHref && (
+                <a className="btn-text btn-text-small" href={orderHref} target="_blank" rel="noreferrer">
+                  Order more food
+                </a>
+              )}
             </dd>
           </div>
         ) : (
@@ -137,10 +145,12 @@ export function PetDropdown({
   routines,
   onOpen,
   defaultOpen = false,
+  orderHref,
   children,
 }: {
   pet: Pet;
   routines: Routine[];
+  orderHref?: string | null;
   /** Tapping the name opens the full profile, when there is one to open. */
   onOpen?: () => void;
   defaultOpen?: boolean;
@@ -182,7 +192,7 @@ export function PetDropdown({
       </div>
       {open && (
         <div className="pet-drop-body" id={id}>
-          <PetQuickInfo pet={pet} routines={routines} />
+          <PetQuickInfo pet={pet} routines={routines} orderHref={orderHref} />
           {children && <div className="pet-drop-actions">{children}</div>}
         </div>
       )}

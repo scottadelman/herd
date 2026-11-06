@@ -1,16 +1,18 @@
-import { useState } from 'react';
-import { daysBetween, formatShortDate, todayISO } from '../lib/dates';
+import { useEffect, useState } from 'react';
+import { addDays, dayPhrase, daysBetween, formatClock, formatShortDate, localDayOf, todayISO } from '../lib/dates';
 import { firstName, memberById } from '../lib/people';
 import { ageText, petSubtitle, sexText, telHref } from '../lib/profile';
 import { describeSchedule } from '../lib/schedule';
-import type { Category, Pet, Routine, Weight } from '../lib/types';
+import type { Category, Pet, Routine, TaskLog, Weight } from '../lib/types';
 import { CareSheetButton } from '../parts/CareSheetButton';
 import { PetDropdown, PetQuickInfo, type PetSection } from '../parts/PetInfo';
 import { SupplySection } from '../parts/Supplies';
+import { foodOrderUrl } from '../lib/supplies';
 import { PetSheet } from '../sheets/PetSheet';
 import { RoutineSheet } from '../sheets/RoutineSheet';
 import { WeightSheet } from '../sheets/WeightSheet';
-import { useApp } from '../state';
+import { CheckoffSheet } from '../sheets/CheckoffSheet';
+import { useApp, whoDid } from '../state';
 import { CategoryMark, Icons, PetAvatar } from '../ui';
 
 export function PetsScreen({ openPetId, setOpenPetId }: { openPetId: string | null; setOpenPetId: (id: string | null) => void }) {
@@ -42,7 +44,13 @@ export function PetsScreen({ openPetId, setOpenPetId }: { openPetId: string | nu
           <section className="group">
             <div className="list">
               {snapshot.pets.map((p) => (
-                <PetDropdown key={p.id} pet={p} routines={snapshot.routines} onOpen={() => setOpenPetId(p.id)}>
+                <PetDropdown
+                  key={p.id}
+                  pet={p}
+                  routines={snapshot.routines}
+                  orderHref={foodOrderUrl(p, snapshot.supplies)}
+                  onOpen={() => setOpenPetId(p.id)}
+                >
                   <button className="btn btn-quiet btn-small" onClick={() => setOpenPetId(p.id)}>
                     Full profile
                   </button>
@@ -103,8 +111,17 @@ const SECTIONS: { title: string; categories: Category[]; add: string; preset: Ca
   { title: 'Vaccines and vet visits', categories: ['vaccine', 'vet'], add: 'Add', preset: 'vaccine' },
 ];
 
+/** How many days apart a routine comes up, roughly. */
+const cadenceDays = (r: Routine) =>
+  r.kind === 'interval' ? r.interval_days ?? 1 : r.kind === 'monthly' ? 31 * (r.repeat_every ?? 1) : r.kind === 'weekly' ? 7 * (r.repeat_every ?? 1) : 1;
+
 function PetDetail({ pet, onBack }: { pet: Pet; onBack: () => void }) {
-  const { snapshot, openMap } = useApp();
+  const { snapshot, openMap, loadHistory } = useApp();
+  // Monthly and every-few-weeks medications need older history to show when they were last given.
+  const longest = Math.max(0, ...snapshot.routines.filter((r) => r.pet_id === pet.id && r.category === 'medication' && r.active).map(cadenceDays));
+  useEffect(() => {
+    if (longest > 10) loadHistory(addDays(todayISO(), -Math.min(400, longest + 7)));
+  }, [longest, loadHistory]);
   const [editing, setEditing] = useState<{ focus?: PetSection } | null>(null);
   const [routineSheet, setRoutineSheet] = useState<{ routine: Routine | null; preset: Category } | null>(null);
   const [weighing, setWeighing] = useState(false);
@@ -154,7 +171,12 @@ function PetDetail({ pet, onBack }: { pet: Pet; onBack: () => void }) {
           </button>
         </div>
         <div className="panel">
-          <PetQuickInfo pet={pet} routines={snapshot.routines} onEdit={(focus) => setEditing({ focus })} />
+          <PetQuickInfo
+            pet={pet}
+            routines={snapshot.routines}
+            onEdit={(focus) => setEditing({ focus })}
+            orderHref={foodOrderUrl(pet, snapshot.supplies)}
+          />
         </div>
         {(pet.breed || age || sex || pet.microchip) && (
           <dl className="facts facts-gap">
@@ -240,9 +262,15 @@ function PetDetail({ pet, onBack }: { pet: Pet; onBack: () => void }) {
 }
 
 function RoutineRow({ routine: r, onOpen }: { routine: Routine; onOpen: () => void }) {
-  const { snapshot } = useApp();
+  const { snapshot, logs, me } = useApp();
+  const [editing, setEditing] = useState<TaskLog | null>(null);
   const who = memberById(snapshot.members, r.assignee);
   const past = r.kind === 'once' && daysBetween(todayISO(), r.start_date) < 0;
+  // Medications show when they were last given, and that time can be fixed right here.
+  const last =
+    r.category === 'medication'
+      ? logs.filter((l) => l.routine_id === r.id && l.status === 'done').sort((a, b) => b.done_at.localeCompare(a.done_at))[0]
+      : undefined;
   return (
     <li>
       <button className={`row row-button${r.active && !past ? '' : ' row-paused'}`} onClick={onOpen}>
@@ -263,6 +291,15 @@ function RoutineRow({ routine: r, onOpen }: { routine: Routine; onOpen: () => vo
           {Icons.next}
         </span>
       </button>
+      {last && (
+        <button className="last-given" onClick={() => setEditing(last)}>
+          <span>
+            Last given {dayPhrase(localDayOf(last.done_at))} at {formatClock(last.done_at)} by {whoDid(last, snapshot.members, me.user_id)}
+          </span>
+          <span className="row-edit">{last.done_by === me.user_id ? 'Change' : 'Details'}</span>
+        </button>
+      )}
+      {editing && <CheckoffSheet log={editing} onClose={() => setEditing(null)} />}
     </li>
   );
 }

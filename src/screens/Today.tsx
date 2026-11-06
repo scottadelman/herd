@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { addDays, daysBetween, formatClock, formatDayLabel, formatTime, toISODate, todayISO, dayPhrase } from '../lib/dates';
+import { addDays, daysBetween, formatClock, formatDayLabel, formatTime, todayISO, dayPhrase } from '../lib/dates';
 import { buildDay, countsTowardProgress, indexLogs, isLate, isResolved, snoozeTarget, type DayItem } from '../lib/day';
 import { firstName, memberById } from '../lib/people';
 import { mealRoutines, petSubtitle } from '../lib/profile';
@@ -7,6 +7,9 @@ import { ANY_TIME, PERIODS, periodOf, type Period } from '../lib/schedule';
 import type { Pet } from '../lib/types';
 import { PetQuickInfo, petSummary } from '../parts/PetInfo';
 import { SupplyBanner } from '../parts/Supplies';
+import { foodOrderUrl } from '../lib/supplies';
+import { CheckoffSheet } from '../sheets/CheckoffSheet';
+import { ComingUp, LoggedRow, MonthCalendar, useSwipe } from './Calendar';
 import { useApp, whoDid } from '../state';
 import { CategoryMark, Icons, PetAvatar, Sheet, Spinner, Stamp, Tags } from '../ui';
 
@@ -43,33 +46,58 @@ export function TodayScreen() {
   const grouped = PERIODS.map((p) => ({ ...p, items: items.filter((i) => periodOf(i.slot) === p.key) })).filter(
     (g) => g.items.length,
   );
+  const logged = useMemo(
+    () =>
+      logs
+        .filter((l) => !l.routine_id && l.occurrence_date === date && (petFilter === 'all' || l.pet_id === petFilter))
+        .sort((a, b) => a.done_at.localeCompare(b.done_at)),
+    [logs, date, petFilter],
+  );
+
+  // Swipe the day view sideways to go back or forward a day.
+  const [slide, setSlide] = useState<'next' | 'prev' | null>(null);
+  const go = (delta: number) => {
+    if (delta > 0 && ahead >= MAX_AHEAD) return;
+    setSlide(delta > 0 ? 'next' : 'prev');
+    setDate(addDays(date, delta));
+  };
+  const swipe = useSwipe(() => go(1), () => go(-1));
+  const pickDay = (d: string) => {
+    setSlide(null);
+    setDate(d);
+    window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  };
 
   return (
     <>
+      <div className="day-swipe" {...swipe}>
       <header className="screen-head">
         <div className="day-nav">
-          <button className="icon-btn" onClick={() => setDate(addDays(date, -1))} aria-label="Previous day">
+          <button className="icon-btn" onClick={() => go(-1)} aria-label="Previous day">
             {Icons.prev}
           </button>
           <h1 className="screen-title">{formatDayLabel(date, today)}</h1>
           <button
             className="icon-btn"
-            onClick={() => setDate(addDays(date, 1))}
+            onClick={() => go(1)}
             aria-label="Next day"
             disabled={ahead >= MAX_AHEAD}
           >
             {Icons.next}
           </button>
-          {date !== today ? (
-            <button className="btn-text day-nav-today" onClick={() => setDate(today)}>
+          {date !== today && (
+            <button className="btn-text day-nav-today" onClick={() => pickDay(today)}>
               Back to today
             </button>
-          ) : (
-            pets.length > 0 && (
-              <button className="add-btn" onClick={() => openAdd({ kind: 'menu' })} aria-label="Add a task, event, log or supply">
-                {Icons.plus}
-              </button>
-            )
+          )}
+          {pets.length > 0 && (
+            <button
+              className="add-btn"
+              onClick={() => openAdd({ kind: 'menu', date: date === today ? undefined : date })}
+              aria-label={date === today ? 'Add a task, event, log or supply' : `Add something on ${formatDayLabel(date, today)}`}
+            >
+              {Icons.plus}
+            </button>
           )}
         </div>
         {counted.length > 0 &&
@@ -117,6 +145,7 @@ export function TodayScreen() {
 
       {focusPet && <PetCard key={focusPet.id} pet={focusPet} onProfile={() => viewPet(focusPet.id)} />}
 
+      <div key={date} className={`day-body${slide ? ` day-slide-${slide}` : ''}`}>
       {pets.length === 0 ? (
         <div className="empty">
           <p>Add your pets and their routines, and today’s list builds itself.</p>
@@ -159,6 +188,19 @@ export function TodayScreen() {
         ))
       )}
 
+      {logged.length > 0 && (
+        <section className="group" aria-label="Also logged">
+          <h2 className="group-label">Also logged</h2>
+          <ul className="list">
+            {logged.map((l) => (
+              <LoggedRow key={l.id} log={l} />
+            ))}
+          </ul>
+        </section>
+      )}
+      </div>
+      </div>
+
       {pets.length > 0 && (
         <section className="group shortcuts" aria-label="Shortcuts">
           <button className="btn btn-quiet btn-small" onClick={openMap}>
@@ -176,6 +218,13 @@ export function TodayScreen() {
             </button>
           )}
         </section>
+      )}
+
+      {pets.length > 0 && (
+        <>
+          <MonthCalendar selected={date} onSelect={pickDay} />
+          <ComingUp onPick={pickDay} />
+        </>
       )}
 
       {opened && <TaskSheet item={opened} onClose={() => setOpenKey(null)} />}
@@ -202,7 +251,7 @@ function PetCard({ pet, onProfile }: { pet: Pet; onProfile: () => void }) {
       </button>
       {open && (
         <div className="pet-card-body" id={id}>
-          <PetQuickInfo pet={pet} routines={snapshot.routines} />
+          <PetQuickInfo pet={pet} routines={snapshot.routines} orderHref={foodOrderUrl(pet, snapshot.supplies)} />
           <button className="btn-text" onClick={onProfile}>
             Full profile
           </button>
@@ -278,7 +327,7 @@ function TaskRow({
 
   let action: JSX.Element;
   if (state === 'done' && log) {
-    const name = doer?.display_name ?? log.sitter_name ?? '?';
+    const name = doer?.display_name ?? log.sitter_name ?? log.author_name ?? '?';
     action = (
       <button className="stamp-btn" onClick={onOpen} aria-label={`${label}, done. Details`}>
         <Stamp name={name} color={doer?.color ?? SITTER_GREY} fresh={fresh || log.id.startsWith('temp-')} />
@@ -328,18 +377,15 @@ function TaskRow({
 }
 
 function TaskSheet({ item, onClose }: { item: DayItem; onClose: () => void }) {
-  const { snapshot, me, checkOff, skip, snooze, undo, editLog, backend } = useApp();
+  const { snapshot, me, checkOff, skip, snooze, undo } = useApp();
   const { routine, pet, log, state, slot } = item;
   const today = todayISO();
   const future = daysBetween(today, item.date) > 0;
   const [note, setNote] = useState(log?.note ?? '');
   const [showNote, setShowNote] = useState(false);
-  const mine = !!log && log.done_by === me.user_id;
-  const [time, setTime] = useState(() => (log ? toTimeInput(log.done_at) : ''));
   const target = snoozeTarget(item.date, today);
   const targetLabel = dayPhrase(target, today);
   const who = log ? whoDid(log, snapshot.members, me.user_id, true) : '';
-  const doer = log ? memberById(snapshot.members, log.done_by) : undefined;
   const assignee = memberById(snapshot.members, routine.assignee);
   const pending = !!log?.id.startsWith('temp-');
   const isMeal = mealRoutines(pet, [routine]).length > 0;
@@ -493,93 +539,10 @@ function TaskSheet({ item, onClose }: { item: DayItem; onClose: () => void }) {
   }
 
   // done or skipped
-  const changed = (log?.note ?? '') !== note || (log && toTimeInput(log.done_at) !== time);
+  if (!log) return null;
   return (
-    <Sheet
-      title={`${routine.title} for ${pet.name}`}
-      onClose={onClose}
-      footer={
-        <div className="sheet-actions">
-          {mine && (
-            <button
-              className="btn btn-primary btn-block"
-              disabled={!changed || pending}
-              onClick={() => {
-                if (!log) return;
-                onClose();
-                editLog(log, { note: note.trim() || null, done_at: withTime(log.done_at, time) });
-              }}
-            >
-              Save changes
-            </button>
-          )}
-          <button
-            className="btn btn-quiet btn-block"
-            disabled={pending}
-            onClick={() => {
-              if (!log) return;
-              onClose();
-              undo(log);
-            }}
-          >
-            {state === 'skipped' ? 'Undo skip' : 'Undo check-off'}
-          </button>
-        </div>
-      }
-    >
-      <div className="stack">
-        <div className="done-detail">
-          {state === 'done' ? (
-            <Stamp name={doer?.display_name ?? log?.sitter_name ?? '?'} color={doer?.color ?? SITTER_GREY} size="lg" />
-          ) : (
-            <span className="stamp-skip stamp-skip-lg">{Icons.skip}</span>
-          )}
-          <p>
-            {who} {state === 'skipped' ? 'skipped this' : 'checked this off'} at {log ? formatClock(log.done_at) : ''}
-            {log && toISODate(new Date(log.done_at)) !== today
-              ? `, ${dayPhrase(toISODate(new Date(log.done_at)), today)}`
-              : ''}
-            .
-          </p>
-        </div>
-        {mine ? (
-          <>
-            <label className="field">
-              <span className="field-label">{state === 'skipped' ? 'Time' : 'Time it was done'}</span>
-              <input id="done-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
-              <span className="field-hint">Forgot to tap? Set the time it actually happened.</span>
-            </label>
-            <label className="field">
-              <span className="field-label">Note</span>
-              <textarea
-                id="done-note"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                rows={2}
-                maxLength={500}
-                placeholder="Only ate half, seemed tired…"
-              />
-            </label>
-          </>
-        ) : (
-          log?.note && <p className="note">“{log.note}”</p>
-        )}
-        {!mine && backend.kind === 'supabase' && <p className="muted small">Only {who} can change the time or note.</p>}
-        {details}
-      </div>
-    </Sheet>
+    <CheckoffSheet log={log} onClose={onClose}>
+      {details}
+    </CheckoffSheet>
   );
-}
-
-function toTimeInput(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function withTime(iso: string, hhmm: string): string {
-  if (!/^\d{2}:\d{2}$/.test(hhmm)) return iso;
-  const d = new Date(iso);
-  const [h, m] = hhmm.split(':').map(Number);
-  d.setHours(h, m, 0, 0);
-  return d.toISOString();
 }

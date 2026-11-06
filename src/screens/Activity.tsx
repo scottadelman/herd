@@ -1,14 +1,17 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { addDays, daysBetween, formatClock, formatDayLabel, formatShortDate, todayISO, dayPhrase } from '../lib/dates';
 import { memberById } from '../lib/people';
 import type { TaskLog } from '../lib/types';
+import { CheckoffSheet } from '../sheets/CheckoffSheet';
 import { useApp, whoDid } from '../state';
-import { Spinner, Stamp } from '../ui';
+import { Icons, Spinner, Stamp } from '../ui';
 
 const SITTER_GREY = '#7B8794';
 
 export function ActivityScreen() {
   const { snapshot, logs, me, openAdd, historyFrom, historyLoading, loadHistory } = useApp();
+  const [openId, setOpenId] = useState<string | null>(null);
+  const opened = logs.find((l) => l.id === openId) ?? null;
 
   const days = useMemo(() => {
     const sorted = [...logs].sort((a, b) => b.done_at.localeCompare(a.done_at));
@@ -58,9 +61,10 @@ export function ActivityScreen() {
                         ? 'logged this'
                         : '';
                 return (
-                  <li key={l.id} className={`row${l.status !== 'done' ? ' row-done' : ''}`}>
-                    <Stamp name={who?.display_name ?? l.sitter_name ?? '?'} color={who?.color ?? SITTER_GREY} size="sm" />
-                    <div className="row-text">
+                  <li key={l.id}>
+                    <button className={`row row-button${l.status !== 'done' ? ' row-done' : ''}`} onClick={() => setOpenId(l.id)}>
+                    <Stamp name={who?.display_name ?? l.sitter_name ?? l.author_name ?? '?'} color={who?.color ?? SITTER_GREY} size="sm" />
+                    <span className="row-text">
                       <span className="row-title">
                         {l.title} for {petName(l.pet_id)}
                       </span>
@@ -71,7 +75,11 @@ export function ActivityScreen() {
                         </span>
                       </span>
                       {l.note && <span className="note">“{l.note}”</span>}
-                    </div>
+                    </span>
+                    <span className="chev" aria-hidden="true">
+                      {Icons.next}
+                    </span>
+                    </button>
                   </li>
                 );
               })}
@@ -79,6 +87,7 @@ export function ActivityScreen() {
           </section>
         ))
       )}
+      {opened && <CheckoffSheet log={opened} onClose={() => setOpenId(null)} />}
       <div className="history-more">
         <p className="footnote">
           Showing everything since {formatShortDate(historyFrom)} ({daysBetween(historyFrom, todayISO())} days). Everyone in the household sees the same history.

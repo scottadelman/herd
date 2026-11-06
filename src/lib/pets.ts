@@ -31,6 +31,7 @@ const daily = (title: string, ...times: string[]): Template => ({
   times,
   weekdays: [],
   interval_days: null,
+  repeat_every: 1,
 });
 
 const every = (title: string, days: number, ...times: string[]): Template => ({
@@ -41,6 +42,7 @@ const every = (title: string, days: number, ...times: string[]): Template => ({
   times,
   weekdays: [],
   interval_days: days,
+  repeat_every: 1,
 });
 
 const medEvery = (title: string, days: number): Template => ({ ...every(title, days), category: 'medication' });

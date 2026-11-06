@@ -1,12 +1,16 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { dayPhrase, formatShortDate, todayISO } from '../lib/dates';
 import {
   LASTS_CHOICES,
   SUPPLY_KINDS,
   describeSupply,
+  extractUrl,
   isOrdered,
   needsOrder,
   openNewPatch,
+  orderUrl,
+  searchLinks,
+  siteLabel,
   supplyEmoji,
   supplyFor,
   supplyStatus,
@@ -29,12 +33,19 @@ export function SupplyMeter({ supply }: { supply: Supply }) {
 }
 
 export function SupplyRow({ supply, onOpen, showWho = true }: { supply: Supply; onOpen: () => void; showWho?: boolean }) {
+  return (
+    <li>
+      <SupplyRowBody supply={supply} onOpen={onOpen} showWho={showWho} />
+    </li>
+  );
+}
+
+function SupplyRowBody({ supply, onOpen, showWho = true }: { supply: Supply; onOpen: () => void; showWho?: boolean }) {
   const { snapshot } = useApp();
   const today = todayISO();
   const st = supplyStatus(supply, today);
   const urgent = st.state === 'order' || st.state === 'out';
   return (
-    <li>
       <button className="row row-button supply-row" onClick={onOpen}>
         <span className="supply-emoji" aria-hidden="true">
           {supplyEmoji(supply.kind)}
@@ -55,7 +66,6 @@ export function SupplyRow({ supply, onOpen, showWho = true }: { supply: Supply; 
           {Icons.next}
         </span>
       </button>
-    </li>
   );
 }
 
@@ -100,19 +110,64 @@ export function SupplySection({ petId, title = 'Food and supplies' }: { petId?: 
 export function SupplyBanner() {
   const { snapshot } = useApp();
   const [open, setOpen] = useState<string | null>(null);
+  const away = useRef<string | null>(null);
   const today = todayISO();
   const due = snapshot.supplies.filter((s) => needsOrder(s, today));
   const opened = snapshot.supplies.find((s) => s.id === open);
+
+  // Back from the store: offer "I ordered it" right away.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && away.current) {
+        setOpen(away.current);
+        away.current = null;
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, []);
+
   if (!due.length) return null;
   return (
     <section className="group" aria-label="Time to order">
       <ul className="list list-alert">
         {due.map((s) => (
-          <SupplyRow key={s.id} supply={s} onOpen={() => setOpen(s.id)} />
+          <li key={s.id} className="supply-alert">
+            <SupplyRowBody supply={s} onOpen={() => setOpen(s.id)} />
+            <a
+              className="btn btn-primary btn-small supply-order"
+              href={orderUrl(s)}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => (away.current = s.id)}
+            >
+              Order
+            </a>
+          </li>
         ))}
       </ul>
       {opened && <SupplySheet supply={opened} onClose={() => setOpen(null)} />}
     </section>
+  );
+}
+
+/** Where to order: the saved product link, or searches on Chewy and Amazon. */
+function OrderButtons({ supply }: { supply: Supply }) {
+  if (supply.order_url) {
+    return (
+      <a className="btn btn-quiet btn-block" href={supply.order_url} target="_blank" rel="noreferrer">
+        Order on {siteLabel(supply.order_url)}
+      </a>
+    );
+  }
+  return (
+    <div className="btn-pair">
+      {searchLinks(supply.name).map((l) => (
+        <a key={l.label} className="btn btn-quiet" href={l.url} target="_blank" rel="noreferrer">
+          Find on {l.label}
+        </a>
+      ))}
+    </div>
   );
 }
 
@@ -163,6 +218,7 @@ export function SupplySheet({ supply, presetPetId, onClose }: { supply?: Supply;
             <SupplyMeter supply={supply} />
             <p className="muted">{describeSupply(supply, today, fmtDay)}.</p>
           </div>
+          {!ordered && <OrderButtons supply={supply} />}
           <dl className="facts">
             <div>
               <dt>For</dt>
@@ -202,10 +258,10 @@ export function SupplySheet({ supply, presetPetId, onClose }: { supply?: Supply;
             )}
           </dl>
           <div className="text-actions">
-            {supply.order_url && (
-              <a className="btn-text" href={supply.order_url} target="_blank" rel="noreferrer">
-                Open the order page
-              </a>
+            {!supply.order_url && (
+              <button className="btn-text" onClick={() => setEditing(true)}>
+                Save the product link
+              </button>
             )}
             {ordered && (
               <button className="btn-text" onClick={() => run(() => backend.updateSupply(supply.id, { ordered_on: null }), 'Order cleared')}>
@@ -244,8 +300,8 @@ function SupplyForm({ supply, presetPetId, onClose }: { supply?: Supply; presetP
   const [notes, setNotes] = useState(supply?.notes ?? '');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
-  const cleanUrl = url.trim() ? (/^https?:\/\//i.test(url.trim()) ? url.trim() : `https://${url.trim()}`) : null;
-  const valid = name.trim() && lasts >= 1 && lasts <= 365 && lead >= 0 && lead <= 60 && opened;
+  const cleanUrl = extractUrl(url);
+  const valid = name.trim() && lasts >= 1 && lasts <= 365 && lead >= 0 && lead <= 60 && opened && (!url.trim() || !!cleanUrl);
 
   async function save(e: FormEvent) {
     e.preventDefault();
@@ -381,9 +437,44 @@ function SupplyForm({ supply, presetPetId, onClose }: { supply?: Supply; presetP
             </span>
           )}
         </div>
-        <Field label="Where you order it" hint="Optional. A link to reorder in one tap.">
-          <input id="supply-url" type="url" inputMode="url" value={url} onChange={(e) => setUrl(e.target.value)} maxLength={500} placeholder="chewy.com/..." />
-        </Field>
+        <div className="field">
+          <label className="field-label" htmlFor="supply-url">
+            Link to order it
+          </label>
+          <input
+            id="supply-url"
+            inputMode="url"
+            autoCapitalize="off"
+            autoCorrect="off"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onPaste={(e) => {
+              // A share from the Chewy or Amazon app comes with words around the link.
+              const found = extractUrl(e.clipboardData.getData('text'));
+              if (found) {
+                e.preventDefault();
+                setUrl(found);
+              }
+            }}
+            onBlur={() => cleanUrl && setUrl(cleanUrl)}
+            maxLength={500}
+            placeholder="Paste the product page link"
+          />
+          <span className="field-hint">
+            Optional. Without one, the Order button searches Chewy for “{name.trim() || 'the name'}”.
+            {name.trim() && !cleanUrl && ' Find it first:'}
+          </span>
+          {name.trim() && !cleanUrl && (
+            <div className="chips">
+              {searchLinks(name).map((l) => (
+                <a key={l.label} className="chip" href={l.url} target="_blank" rel="noreferrer">
+                  Search {l.label}
+                </a>
+              ))}
+            </div>
+          )}
+          {url.trim() && !cleanUrl && <span className="field-hint late">That doesn’t look like a link.</span>}
+        </div>
         <Field label="Notes">
           <input id="supply-notes" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} placeholder="The grain-free one, not the puppy formula" />
         </Field>

@@ -115,3 +115,43 @@ export function supplyFor(s: Supply, pets: Pick<Pet, 'id' | 'name'>[]): string {
   if (!names.length) return 'everyone';
   return names.length <= 2 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
+
+/* ---------- Ordering ---------- */
+
+/** The first web link in some pasted text, like a share from the Chewy app ("Check out… https://…"). */
+export function extractUrl(text: string): string | null {
+  const t = text.trim();
+  if (!t) return null;
+  const full = t.match(/https?:\/\/[^\s<>"']+/i);
+  if (full) return full[0].replace(/[).,;!?]+$/, '');
+  const bare = t.match(/(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:\/[^\s<>"']*)?/i);
+  return bare ? `https://${bare[0].replace(/[).,;!?]+$/, '')}` : null;
+}
+
+/** "chewy.com" from a link. */
+export function siteLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return 'the store';
+  }
+}
+
+/** Search links for when nobody has saved the exact product page yet. */
+export function searchLinks(query: string): { label: string; url: string }[] {
+  const q = encodeURIComponent(query.trim());
+  return [
+    { label: 'Chewy', url: `https://www.chewy.com/s?query=${q}` },
+    { label: 'Amazon', url: `https://www.amazon.com/s?k=${q}` },
+  ];
+}
+
+/** Where tapping "Order" goes: the saved link, or a Chewy search for the name. */
+export const orderUrl = (s: Pick<Supply, 'order_url' | 'name'>) => s.order_url || searchLinks(s.name)[0].url;
+
+/** The order link for a pet's food: their food supply's link, or a Chewy search for what they eat. */
+export function foodOrderUrl(pet: Pick<Pet, 'id' | 'food'>, supplies: Supply[]): string | null {
+  const own = supplies.find((s) => s.kind === 'food' && s.pet_ids.includes(pet.id) && s.order_url);
+  if (own) return own.order_url;
+  return pet.food?.trim() ? searchLinks(pet.food)[0].url : null;
+}

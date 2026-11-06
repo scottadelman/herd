@@ -4,15 +4,16 @@ A web app your whole household adds to their home screen. Everyone sees today's
 pet routines, checks things off with one tap, and sees who did what, live.
 Nobody double-feeds the dog.
 
-- **Accounts and households.** Sign up, start a household, invite people with a link or code. Belong to more than one household and switch between them.
+- **Accounts and households.** Sign up, start a household, invite people with a link or code. Belong to more than one household and switch between them. Tap your name under People for your photo, phone, sign out, and deleting your account (your check-offs stay in the household's history).
 - **Pets.** Any kind of pet (type your own for "Other"), with a photo or any emoji. Starter routines for each species, plus your own tasks from the first screen.
 - **Pet profiles.** Breed, birthday, sex, microchip, feeding instructions and amounts, allergies, likes and dislikes ("hates golden retrievers"), and the primary vet with tap-to-call. Every pet has a dropdown with the feeding and allergy details on Today, Pets, and the sitter page.
 - **Routines.** Every day, certain days, every few days, or one time. Times, an assigned person, and notes.
 - **Health.** Medications with doses, vaccines, vet visits, and a weight log with a trend chart.
-- **Today (home).** A checklist built from everyone's routines, in the middle of the tab bar. Look ahead or back to any day. Skip a task, snooze it a day, add a note, or fix the time on a check-off. The + button adds a task, appointment, log entry, supply or pet from anywhere.
-- **Calendar.** A month view of medications, vaccines, vet visits and other scheduled tasks, with what's coming up. Add something on any day, and look back at what happened on past days (who did what, and anything missed).
+- **Today (home).** The day's checklist up top (swipe sideways to change days), with the month calendar underneath: tap any day and the top shows it. Skip a task, snooze it a day, add a note. The + button adds a task, appointment, log entry, supply or pet for the day you're looking at.
+- **Fix any check-off.** Wherever a check-off shows (Today, Activity, a pet's medications, a routine's recent list), tap it to change the day, time or note on your own.
+- **Schedules.** One time, every day, every week (on any days), every month, or every few days, weeks or months.
 - **Activity.** Full history, a month at a time, and a "last 7 days" count of who did what. Everyone who joins sees the same history.
-- **Food and supplies.** Track a bag of food, litter or meds and Herd says when to order more, before it runs out. "I ordered it" so nobody orders twice, and it learns how long a bag really lasts.
+- **Food and supplies.** Track a bag of food, litter or meds and Herd says when to order more, before it runs out. One tap to order (your saved product link, or a Chewy search), "I ordered it" so nobody orders twice, and it learns how long a bag really lasts.
 - **Walk map.** Save usual routes (draw them, or record one while you walk), parks and poop bag spots, plus public bag dispensers and dog parks from OpenStreetMap.
 - **Care sheets.** A PDF per pet with feeding, allergies, routines, medications, what's coming up and the vet, to text to a sitter or stick on the fridge.
 - **Sitter links.** A no-account link for a walker or sitter that shows only today's tasks for the pets you pick, and stops working on a date you choose.
@@ -28,6 +29,12 @@ Built with React, TypeScript and Vite. Data, accounts and live updates come from
 
 Already running Herd? Each update that changes the database comes with a numbered
 file in `supabase/migrations`. Run each new one once, in order.
+
+**Update 004** (every month and every-few schedules, account photo and phone, deleting your account, editing check-off days):
+
+1. **Database.** Open `supabase/migrations/004_schedules_accounts.sql` in Notepad, select all, and copy. In Supabase, open **SQL Editor**, click **New query**, paste, and click **Run**. You should see "Success. No rows returned". It only adds things; nothing existing is removed.
+2. **Reminder code (do this one).** In Supabase, open **Edge Functions**, then your reminder function (`clever-api`), then its **Code** tab. Open `supabase/functions/send-reminders/index.ts` in Notepad, select all, copy, replace everything in the editor with it, and deploy. Leave its name and settings as they are. The old code doesn't know the new "every month" schedule, so skipping this would pause reminders once anyone uses it.
+3. **Push the app.** Double-click `ship.cmd`. Everyone closes Herd and opens it again.
 
 **Update 003** (pet profiles, food reminders, walk map):
 
@@ -158,8 +165,8 @@ Without real values in `public/config.js`, the app runs in demo-only mode.
 | `src/lib/schedule.ts` | When routines are due and how they're described |
 | `src/lib/day.ts` | One day's tasks after skips and snoozes |
 | `src/state.tsx` | Loading, live sync, and optimistic check-offs |
-| `src/screens/` | Today, Calendar, Pets, Activity, Household, Sitter, the walk map, sign-in and setup |
-| `src/sheets/` | Forms used from more than one screen: add a pet, routine, log entry, weight, and the Add menu |
+| `src/screens/` | Today (with the calendar parts in `Calendar.tsx`), Pets, Activity, Household, Sitter, the walk map, sign-in and setup |
+| `src/sheets/` | Forms used from more than one screen: add a pet, routine, log entry, weight, a check-off, your account, and the Add menu |
 | `src/parts/` | Pieces shared by screens: pet dropdowns, food and supplies, the care sheet button |
 | `src/lib/supplies.ts` | When to order more, and learning how long a bag lasts |
 | `src/lib/careSheet.ts` | The PDF care sheet |

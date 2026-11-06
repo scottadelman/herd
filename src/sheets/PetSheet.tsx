@@ -125,6 +125,7 @@ export function PetSheet({
           times: c.time ? [c.time] : [],
           weekdays: [],
           interval_days: null,
+          repeat_every: 1,
         });
       }
       for (const t of chosen) {

@@ -27,6 +27,7 @@ const routine = (over: Partial<RRoutine>): RRoutine => ({
   times: ['18:00'],
   weekdays: [],
   interval_days: null,
+  repeat_every: 1,
   start_date: '2026-10-01',
   assignee: null,
   active: true,
@@ -184,11 +185,14 @@ describe('server rules match the app', () => {
     { kind: 'interval', interval_days: 30, start_date: '2026-10-20' },
     { kind: 'once', start_date: '2026-11-12' },
     { kind: 'daily', active: false },
+    { kind: 'monthly', start_date: '2026-10-31' },
+    { kind: 'monthly', start_date: '2026-10-18', repeat_every: 2, times: [] },
+    { kind: 'weekly', weekdays: [2, 4], repeat_every: 3, start_date: '2026-10-15' },
   ];
   it('agree on which days every kind of routine is due', () => {
     for (const k of kinds) {
       const r = routine(k);
-      for (let i = 0; i < 70; i++) {
+      for (let i = 0; i < 200; i++) {
         const d = addDays('2026-10-15', i);
         expect(occurrences(r, d), `${JSON.stringify(k)} on ${d}`).toEqual(occurrencesForDate(r as unknown as Routine, d));
       }
